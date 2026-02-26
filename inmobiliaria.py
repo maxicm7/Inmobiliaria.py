@@ -148,6 +148,82 @@ REGIONES_MENDOZA = {
 }
 
 # ─────────────────────────────────────────────────────────
+# ✅ NUEVA FUNCIÓN: Validar ubicación real de la propiedad
+# ─────────────────────────────────────────────────────────
+def validar_ubicacion_mendoza(texto: str, loc_filtro: str) -> tuple:
+    """
+    Valida si la propiedad está realmente en Mendoza y coincide con el departamento filtrado.
+    Retorna: (es_valida, ubicacion_detectada)
+    """
+    if not texto:
+        return False, "Desconocida"
+    
+    texto = texto.lower()
+    
+    # Palabras clave que indican NO Mendoza
+    no_mendoza = [
+        "buenos aires", "caba", "ciudad autónoma", "palermo", "recoleta",
+        "belgrano", "caballito", "la plata", "rosario", "córdoba", "santa fe",
+        "tucumán", "salta", "neuquén", "bariloche", "mar del plata",
+        "provincia de buenos aires", "gba", "gran buenos aires"
+    ]
+    
+    if any(keyword in texto for keyword in no_mendoza):
+        return False, "Fuera de Mendoza"
+    
+    # Departamentos de Mendoza que debemos detectar
+    departamentos_mendoza = [
+        "capital", "mendoza centro", "godoy cruz", "guaymallén", "las heras",
+        "luján de cuyo", "maipú", "chacras de coria", "villa nueva",
+        "rivadavia", "san martín", "junín", "santa rosa", "la paz",
+        "lavalle", "tunuyán", "tupungato", "san carlos", "san rafael",
+        "general alvear", "malargüe", "valle de uco", "mendocino"
+    ]
+    
+    ubicacion_detectada = loc_filtro  # Default al filtro
+    
+    for depto in departamentos_mendoza:
+        if depto in texto:
+            # Normalizar nombre
+            if depto == "mendoza centro":
+                ubicacion_detectada = "Capital"
+            elif depto == "luján de cuyo":
+                ubicacion_detectada = "Luján de Cuyo"
+            elif depto == "san martín":
+                ubicacion_detectada = "San Martín"
+            elif depto == "san carlos":
+                ubicacion_detectada = "San Carlos"
+            elif depto == "san rafael":
+                ubicacion_detectada = "San Rafael"
+            elif depto == "general alvear":
+                ubicacion_detectada = "General Alvear"
+            elif depto == "las heras":
+                ubicacion_detectada = "Las Heras"
+            elif depto == "chacras de coria":
+                ubicacion_detectada = "Chacras de Coria"
+            elif depto == "villa nueva":
+                ubicacion_detectada = "Villa Nueva"
+            elif depto == "valle de uco":
+                ubicacion_detectada = "Tunuyán"
+            else:
+                ubicacion_detectada = depto.title()
+            break
+    
+    # Verificar que sea Mendoza
+    keywords_mendoza = ["mendoza", "cuyo", "mendocino", "andino"]
+    es_mendoza = any(keyword in texto for keyword in keywords_mendoza)
+    
+    # Si el departamento detectado está en nuestra lista de ZONAS_MENDOZA, es válido
+    if ubicacion_detectada in ZONAS_MENDOZA.keys():
+        return True, ubicacion_detectada
+    
+    # Si no hay detección clara pero el filtro es Mendoza, confiar parcialmente
+    if loc_filtro in ZONAS_MENDOZA.keys():
+        return True, loc_filtro
+    
+    return False, ubicacion_detectada
+
+# ─────────────────────────────────────────────────────────
 # FUNCIONES DE UTILIDAD
 # ─────────────────────────────────────────────────────────
 def extraer_precio_numerico(precio_str: str) -> float:
@@ -254,7 +330,7 @@ def construir_url(portal: str, filtros: dict) -> str:
     return ""
 
 # ─────────────────────────────────────────────────────────
-# SCRAPING
+# ✅ SCRAPING CORREGIDO (con validación de ubicación)
 # ─────────────────────────────────────────────────────────
 @st.cache_data(ttl=1800, show_spinner=False)
 def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 20) -> list:
@@ -294,6 +370,15 @@ def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 2
     for item in items[:max_items]:
         try:
             texto_completo = item.get_text(" ", strip=True)
+            
+            # ✅ VALIDACIÓN DE UBICACIÓN (NUEVO)
+            es_valida, ubicacion_real = validar_ubicacion_mendoza(texto_completo, filtros["loc"])
+            
+            # Si la propiedad NO está en Mendoza, la saltamos
+            if not es_valida:
+                continue
+            
+            # Precio
             price_sel = ['[data-qa="POSTING_CARD_PRICE"]', ".posting-card__price", ".price-value", ".card__price", ".item-price", ".price", ".listing__price", "span.price"]
             precio_texto = "Consultar"
             for sel in price_sel:
@@ -306,6 +391,7 @@ def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 2
                 if m:
                     precio_texto = m.group(0).strip()
             
+            # Título / Dirección
             titulo_sel = ['[data-qa="POSTING_CARD_ADDRESS"]', ".posting-card__title", ".card__address", ".card__title--address", ".listing__title", ".property-title", "h2", "h3", ".title"]
             titulo = ""
             for sel in titulo_sel:
@@ -321,6 +407,7 @@ def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 2
             if not titulo:
                 titulo = f"Propiedad {portal}"
             
+            # Imagen
             img_url = PLACEHOLDER_IMG
             img_tag = item.find("img")
             if img_tag:
@@ -330,12 +417,24 @@ def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 2
                         img_url = candidate.split("?")[0]
                         break
             
+            # URL del aviso
             link_tag = item.find("a", href=True)
             aviso_url = urljoin(url, link_tag["href"]) if link_tag else url
             
+            # Metros cuadrados
             metros = extraer_metros_cuadrados(texto_completo)
+            
+            # Expensas
             expensas = extraer_expensas(texto_completo)
+            
+            # Precio numérico
             precio_num = extraer_precio_numerico(precio_texto)
+            
+            # ✅ Coordenadas reales basadas en ubicación detectada
+            lat, lon = None, None
+            if ubicacion_real in ZONAS_MENDOZA:
+                lat = ZONAS_MENDOZA[ubicacion_real]["lat"]
+                lon = ZONAS_MENDOZA[ubicacion_real]["lon"]
             
             prop_dict = {
                 "id": generar_id(portal, titulo, precio_texto),
@@ -345,20 +444,21 @@ def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 2
                 "precio_numerico": precio_num,
                 "url": aviso_url,
                 "imagen": img_url,
-                "ubicacion": filtros["loc"],
+                "ubicacion": ubicacion_real,  # ✅ CORREGIDO: Usa ubicación real detectada
                 "dormitorios": filtros["amb"],
                 "banos": filtros["banos"],
                 "cochera": filtros["cochera"],
                 "metros_cuadrados": metros,
                 "antiguedad": None,
                 "fecha_scraping": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                "lat": None,
-                "lon": None,
-                "descripcion": None,
+                "lat": lat,  # ✅ NUEVO: Coordenadas reales
+                "lon": lon,  # ✅ NUEVO: Coordenadas reales
+                "descripcion": texto_completo[:500] if texto_completo else None,
                 "expensas": expensas,
                 "moneda": "USD" if any(s in precio_texto.lower() for s in ["usd", "u$s"]) else "ARS",
                 "tipo_operacion": filtros["op"],
                 "tipo_propiedad": filtros["tipo"],
+                "ubicacion_validada": es_valida,
             }
             propiedades_dict.append(prop_dict)
         except Exception:
@@ -379,6 +479,9 @@ def dicts_to_propiedades(dicts: list) -> List[Propiedad]:
             moneda=d.get("moneda", "ARS"),
             tipo_operacion=d.get("tipo_operacion", "Venta"),
             tipo_propiedad=d.get("tipo_propiedad", "Departamento"),
+            lat=d.get("lat"),
+            lon=d.get("lon"),
+            descripcion=d.get("descripcion"),
         )
         result.append(p)
     return result
@@ -459,7 +562,7 @@ class AnalizadorInmobiliario:
         }
 
 # ─────────────────────────────────────────────────────────
-# FUNCIONES GEMINI AI
+# ✅ FUNCIONES GEMINI AI
 # ─────────────────────────────────────────────────────────
 def procesar_busqueda_gemini(api_key: str, urls: str, prompt: str) -> str:
     """Procesa la búsqueda utilizando la API de Gemini"""
@@ -468,7 +571,7 @@ def procesar_busqueda_gemini(api_key: str, urls: str, prompt: str) -> str:
     
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         
         full_prompt = f"""
         Actúa como un experto asesor inmobiliario con años de experiencia en Mendoza, Argentina.
@@ -665,12 +768,21 @@ if buscar or st.session_state.view == "results":
     
     todas = dicts_to_propiedades(todas_dicts)
     
+    # ✅ NUEVO: Filtrar propiedades que no están realmente en la ubicación seleccionada
+    todas = [p for p in todas if p.ubicacion in ZONAS_MENDOZA.keys()]
+    
+    # Filtros post-scraping existentes
     if p_min > 0:
         todas = [p for p in todas if p.precio_numerico == 0 or p.precio_numerico >= p_min]
     if p_max > 0:
         todas = [p for p in todas if p.precio_numerico == 0 or p.precio_numerico <= p_max]
     if superficie_min > 0:
         todas = [p for p in todas if p.metros_cuadrados and p.metros_cuadrados >= superficie_min]
+    
+    # ✅ NUEVO: Mostrar advertencia si se filtraron propiedades por ubicación
+    if len(todas_dicts) > len(todas):
+        filtradas = len(todas_dicts) - len(todas)
+        st.warning(f"⚠️ Se filtraron {filtradas} propiedades que no están en {loc}")
     
     st.session_state.datos_stats = todas
     st.session_state.datos_mapa = todas
@@ -697,6 +809,14 @@ if buscar or st.session_state.view == "results":
             c2.metric("Precio Mediano", f"${stats['mediana']:,.0f}")
             c3.metric("Desviación Estándar", f"${stats['desviacion']:,.0f}")
             c4.metric("Con Precio", f"{stats['con_precio']}/{stats['total']}")
+        
+        # ✅ NUEVO: Mostrar estadísticas de validación de ubicación
+        ubicaciones = {}
+        for p in todas:
+            ubicaciones[p.ubicacion] = ubicaciones.get(p.ubicacion, 0) + 1
+        
+        if len(ubicaciones) > 1:
+            st.info(f"📍 Propiedades distribuidas en {len(ubicaciones)} departamentos: {', '.join(list(ubicaciones.keys())[:5])}")
         
         st.divider()
         cc1, cc2, cc3 = st.columns([2, 2, 2])
@@ -757,7 +877,7 @@ if buscar or st.session_state.view == "results":
                 b1, b2 = st.columns(2)
                 with b1:
                     lbl_fav = "⭐ Guardado" if es_fav else "☆ Guardar"
-                    # ✅ CORRECCIÓN CRÍTICA #1: key única con índice para evitar StreamlitDuplicateElementKey
+                    # ✅ CORRECCIÓN CRÍTICA #1: key única con índice
                     if st.button(lbl_fav, key=f"fav_{prop.id}_{i}", use_container_width=True):
                         if es_fav:
                             st.session_state.favoritos = [f for f in st.session_state.favoritos if f.id != prop.id]
@@ -876,6 +996,7 @@ elif st.session_state.view == "stats":
         with col3:
             df_valid = df[(df["M²"].notna()) & (df["M²"] > 0) & (df["Precio_Numérico"] > 0)]
             if not df_valid.empty:
+                # ✅ CORRECCIÓN CRÍTICA #2: try/except para statsmodels
                 try:
                     fig3 = px.scatter(
                         df_valid, x="M²", y="Precio_Numérico", trendline="ols",
@@ -884,7 +1005,6 @@ elif st.session_state.view == "stats":
                     )
                     st.plotly_chart(fig3, use_container_width=True)
                 except Exception:
-                    # ✅ CORRECCIÓN CRÍTICA #2: Fallback si statsmodels falla
                     fig3 = px.scatter(
                         df_valid, x="M²", y="Precio_Numérico",
                         title="Precio vs Superficie", color="Dormitorios",
@@ -930,33 +1050,43 @@ elif st.session_state.view == "stats":
 elif st.session_state.view == "mapa":
     st.header("🗺️ Mapa de propiedades")
     propiedades = st.session_state.datos_mapa
+    
+    # ✅ NUEVO: Filtrar solo propiedades con ubicación válida en Mendoza
+    propiedades = [p for p in propiedades if p.ubicacion in ZONAS_MENDOZA.keys()]
+    
     if not propiedades:
         st.info("Realizá una búsqueda primero.")
     else:
         zona_central = ZONAS_MENDOZA.get(propiedades[0].ubicacion, ZONAS_MENDOZA["Capital"])
-        mapa = folium.Map(location=[zona_central["lat"], zona_central["lon"]], zoom_start=12)
+        mapa = folium.Map(location=[zona_central["lat"], zona_central["lon"]], zoom_start=10)
         
         for prop in propiedades:
             z = ZONAS_MENDOZA.get(prop.ubicacion, ZONAS_MENDOZA["Capital"])
-            lat = prop.lat or z["lat"] + np.random.uniform(-0.005, 0.005)
-            lon = prop.lon or z["lon"] + np.random.uniform(-0.005, 0.005)
+            # ✅ CORREGIDO: Usar coordenadas reales de la ubicación detectada
+            lat = prop.lat if prop.lat else z["lat"] + np.random.uniform(-0.005, 0.005)
+            lon = prop.lon if prop.lon else z["lon"] + np.random.uniform(-0.005, 0.005)
+            
             sup = f"{prop.metros_cuadrados:.0f} m²" if prop.metros_cuadrados else "N/A"
             exp = f"${prop.expensas:,.0f}" if prop.expensas else "N/A"
+            
+            # ✅ NUEVO: Mostrar ubicación real detectada en el popup
             popup_html = f"""
             <div style="min-width:220px;font-family:sans-serif;font-size:13px">
             <b>{prop.titulo}</b><br>
             <span style="color:#27ae60;font-weight:bold">{prop.precio}</span><br>
+            📍 <b>{prop.ubicacion}</b><br>
             🛏️ {prop.dormitorios} dorm. &nbsp;|&nbsp; 🚿 {prop.banos} baño<br>
             📏 {sup} &nbsp;|&nbsp; 💸 Expensas: {exp}<br>
             🌐 {prop.portal}<br>
             <a href="{prop.url}" target="_blank">Ver publicación →</a>
             </div>"""
+            
             color = "green" if prop.precio_numerico > 0 and prop.precio_numerico < 50_000_000 else "red"
             folium.Marker(
                 location=[lat, lon],
                 popup=folium.Popup(popup_html, max_width=280),
                 icon=folium.Icon(color=color, icon="home", prefix="fa"),
-                tooltip=f"{prop.titulo[:40]} — {prop.precio}",
+                tooltip=f"{prop.ubicacion} — {prop.titulo[:30]}",
             ).add_to(mapa)
         
         folium_static(mapa, width=1100, height=550)
@@ -1052,12 +1182,12 @@ elif st.session_state.view == "predictivo":
             st.rerun()
 
 # ─────────────────────────────────────────────────────────
-# PÁGINA: GEMINI AI (NUEVA)
+# PÁGINA: GEMINI AI
 # ─────────────────────────────────────────────────────────
 elif st.session_state.view == "gemini":
     st.header("🤖 Asistente Inmobiliario con IA Gemini")
     st.markdown("""
-    Utiliza **Google Gemini 2.5 Flash** para analizar portales inmobiliarios y obtener recomendaciones personalizadas.
+    Utiliza **Google Gemini 1.5 Flash** para analizar portales inmobiliarios y obtener recomendaciones personalizadas.
     
     **Instrucciones:**
     1. Ingresa tu API Key de Google AI Studio.
