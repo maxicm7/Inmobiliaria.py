@@ -468,7 +468,7 @@ def procesar_busqueda_gemini(api_key: str, urls: str, prompt: str) -> str:
     
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         
         full_prompt = f"""
         Actúa como un experto asesor inmobiliario con años de experiencia en Mendoza, Argentina.
@@ -1057,7 +1057,7 @@ elif st.session_state.view == "predictivo":
 elif st.session_state.view == "gemini":
     st.header("🤖 Asistente Inmobiliario con IA Gemini")
     st.markdown("""
-    Utiliza **Google Gemini 1.5 Flash** para analizar portales inmobiliarios y obtener recomendaciones personalizadas.
+    Utiliza **Google Gemini 2.5 Flash** para analizar portales inmobiliarios y obtener recomendaciones personalizadas.
     
     **Instrucciones:**
     1. Ingresa tu API Key de Google AI Studio.
