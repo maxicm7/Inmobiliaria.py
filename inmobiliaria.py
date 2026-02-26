@@ -148,29 +148,15 @@ REGIONES_MENDOZA = {
 }
 
 # ─────────────────────────────────────────────────────────
-# ✅ FUNCIÓN CRÍTICA: Detectar ubicación real de cada propiedad
+# ✅ FUNCIÓN CRÍTICA: Detectar ubicación real
 # ─────────────────────────────────────────────────────────
-def detectar_ubicacion_real(texto: str, titulo: str, loc_filtro: str) -> tuple:
+def detectar_ubicacion_real(texto: str, titulo: str, loc_filtro: str) -> str:
     """
     Detecta la ubicación REAL de la propiedad analizando el texto completo.
-    Retorna: (es_valida, ubicacion_detectada, lat, lon)
     """
     texto_combined = f"{titulo} {texto}".lower()
     
-    # 🚫 Palabras que indican NO Mendoza
-    no_mendoza = [
-        "buenos aires", "caba", "ciudad autónoma", "palermo", "recoleta",
-        "belgrano", "caballito", "la plata", "rosario", "córdoba", "santa fe",
-        "tucumán", "salta", "neuquén", "bariloche", "mar del plata",
-        "provincia de buenos aires", "gba", "gran buenos aires",
-        "tigre", "san isidro", "vicente lópez", "quilmes", "avellaneda"
-    ]
-    
-    for keyword in no_mendoza:
-        if keyword in texto_combined:
-            return False, "Fuera de Mendoza", None, None
-    
-    # ✅ Mapeo de palabras clave a departamentos
+    # Mapeo de palabras clave a departamentos
     departamentos_mendoza = {
         "capital": "Capital",
         "mendoza centro": "Capital",
@@ -204,39 +190,12 @@ def detectar_ubicacion_real(texto: str, titulo: str, loc_filtro: str) -> tuple:
     }
     
     # Buscar coincidencias en el texto
-    ubicacion_detectada = None
-    
     for depto_key, depto_nombre in departamentos_mendoza.items():
         if depto_key in texto_combined:
-            ubicacion_detectada = depto_nombre
-            break
+            return depto_nombre
     
-    # Si no se detectó, usar el filtro como fallback
-    if not ubicacion_detectada:
-        ubicacion_detectada = loc_filtro
-    
-    # Verificar que sea Mendoza
-    keywords_mendoza = ["mendoza", "cuyo", "mendocino"]
-    es_mendoza = any(keyword in texto_combined for keyword in keywords_mendoza)
-    
-    # Si está en nuestra lista de ZONAS_MENDOZA, es válido
-    if ubicacion_detectada in ZONAS_MENDOZA.keys():
-        lat = ZONAS_MENDOZA[ubicacion_detectada]["lat"]
-        lon = ZONAS_MENDOZA[ubicacion_detectada]["lon"]
-        # ✅ Agregar jitter aleatorio para que no se superpongan
-        lat += np.random.uniform(-0.003, 0.003)
-        lon += np.random.uniform(-0.003, 0.003)
-        return True, ubicacion_detectada, lat, lon
-    
-    # Si no hay detección clara pero el filtro es Mendoza, confiar parcialmente
-    if loc_filtro in ZONAS_MENDOZA.keys() and es_mendoza:
-        lat = ZONAS_MENDOZA[loc_filtro]["lat"]
-        lon = ZONAS_MENDOZA[loc_filtro]["lon"]
-        lat += np.random.uniform(-0.003, 0.003)
-        lon += np.random.uniform(-0.003, 0.003)
-        return True, loc_filtro, lat, lon
-    
-    return False, ubicacion_detectada, None, None
+    # Si no detecta nada, usar el filtro
+    return loc_filtro
 
 # ─────────────────────────────────────────────────────────
 # FUNCIONES DE UTILIDAD
@@ -382,7 +341,6 @@ def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 2
         return []
     
     propiedades_dict = []
-    propiedades_filtradas = 0
     
     for item in items[:max_items]:
         try:
@@ -441,23 +399,12 @@ def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 2
             precio_num = extraer_precio_numerico(precio_texto)
             
             # ✅ DETECCIÓN DE UBICACIÓN REAL (CRÍTICO)
-            es_valida, ubicacion_real, lat, lon = detectar_ubicacion_real(
-                texto_completo, titulo, filtros["loc"]
-            )
+            ubicacion_real = detectar_ubicacion_real(texto_completo, titulo, filtros["loc"])
             
-            # Si la propiedad NO está en Mendoza, la saltamos
-            if not es_valida:
-                propiedades_filtradas += 1
-                continue
-            
-            # ✅ Coordenadas con jitter para que no se superpongan
-            if lat is None or lon is None:
-                if ubicacion_real in ZONAS_MENDOZA:
-                    lat = ZONAS_MENDOZA[ubicacion_real]["lat"] + np.random.uniform(-0.003, 0.003)
-                    lon = ZONAS_MENDOZA[ubicacion_real]["lon"] + np.random.uniform(-0.003, 0.003)
-                else:
-                    lat = ZONAS_MENDOZA[filtros["loc"]]["lat"] + np.random.uniform(-0.003, 0.003)
-                    lon = ZONAS_MENDOZA[filtros["loc"]]["lon"] + np.random.uniform(-0.003, 0.003)
+            # ✅ Obtener coordenadas con jitter aleatorio
+            zona_data = ZONAS_MENDOZA.get(ubicacion_real, ZONAS_MENDOZA[filtros["loc"]])
+            lat_jitter = zona_data["lat"] + np.random.uniform(-0.003, 0.003)
+            lon_jitter = zona_data["lon"] + np.random.uniform(-0.003, 0.003)
             
             prop_dict = {
                 "id": generar_id(portal, titulo, precio_texto),
@@ -474,14 +421,13 @@ def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 2
                 "metros_cuadrados": metros,
                 "antiguedad": None,
                 "fecha_scraping": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                "lat": lat,  # ✅ Coordenadas reales con jitter
-                "lon": lon,  # ✅ Coordenadas reales con jitter
-                "descripcion": texto_completo[:500] if texto_completo else None,
+                "lat": lat_jitter,  # ✅ Coordenadas con jitter
+                "lon": lon_jitter,  # ✅ Coordenadas con jitter
+                "descripcion": None,
                 "expensas": expensas,
                 "moneda": "USD" if any(s in precio_texto.lower() for s in ["usd", "u$s"]) else "ARS",
                 "tipo_operacion": filtros["op"],
                 "tipo_propiedad": filtros["tipo"],
-                "ubicacion_validada": es_valida,
             }
             propiedades_dict.append(prop_dict)
         except Exception:
@@ -791,17 +737,7 @@ if buscar or st.session_state.view == "results":
     
     todas = dicts_to_propiedades(todas_dicts)
     
-    # ✅ Filtrar propiedades que no están realmente en Mendoza
-    todas = [p for p in todas if p.ubicacion in ZONAS_MENDOZA.keys()]
-    
-    # ✅ Mostrar advertencia si se filtraron propiedades por ubicación
-    total_scrapeadas = len(todas_dicts)
-    total_validas = len(todas)
-    if total_scrapeadas > total_validas:
-        filtradas = total_scrapeadas - total_validas
-        st.warning(f"⚠️ Se filtraron {filtradas} propiedades que no están en Mendoza")
-    
-    # Filtros post-scraping existentes
+    # Filtros post-scraping
     if p_min > 0:
         todas = [p for p in todas if p.precio_numerico == 0 or p.precio_numerico >= p_min]
     if p_max > 0:
@@ -835,7 +771,7 @@ if buscar or st.session_state.view == "results":
             c3.metric("Desviación Estándar", f"${stats['desviacion']:,.0f}")
             c4.metric("Con Precio", f"{stats['con_precio']}/{stats['total']}")
         
-        # ✅ Mostrar estadísticas de validación de ubicación
+        # ✅ Mostrar distribución por ubicación
         ubicaciones = {}
         for p in todas:
             ubicaciones[p.ubicacion] = ubicaciones.get(p.ubicacion, 0) + 1
@@ -866,7 +802,6 @@ if buscar or st.session_state.view == "results":
         pag_props = todas[inicio: inicio + items_pp]
         
         cols_list = st.columns(cols_grid)
-        # ✅ CORRECCIÓN: Usar enumerate para índice único en keys
         for i, prop in enumerate(pag_props):
             with cols_list[i % cols_grid]:
                 es_fav = any(f.id == prop.id for f in st.session_state.favoritos)
@@ -902,7 +837,6 @@ if buscar or st.session_state.view == "results":
                 b1, b2 = st.columns(2)
                 with b1:
                     lbl_fav = "⭐ Guardado" if es_fav else "☆ Guardar"
-                    # ✅ CORRECCIÓN: key única con índice
                     if st.button(lbl_fav, key=f"fav_{prop.id}_{i}", use_container_width=True):
                         if es_fav:
                             st.session_state.favoritos = [f for f in st.session_state.favoritos if f.id != prop.id]
@@ -1067,14 +1001,11 @@ elif st.session_state.view == "stats":
             st.rerun()
 
 # ─────────────────────────────────────────────────────────
-# ✅ PÁGINA: MAPA (CORREGIDA - Muestra múltiples ubicaciones)
+# ✅ PÁGINA: MAPA (CORREGIDA)
 # ─────────────────────────────────────────────────────────
 elif st.session_state.view == "mapa":
     st.header("🗺️ Mapa de propiedades")
     propiedades = st.session_state.datos_mapa
-    
-    # ✅ Filtrar solo propiedades con ubicación válida en Mendoza
-    propiedades = [p for p in propiedades if p.ubicacion in ZONAS_MENDOZA.keys()]
     
     if not propiedades:
         st.info("Realizá una búsqueda primero.")
@@ -1094,14 +1025,13 @@ elif st.session_state.view == "mapa":
         mapa = folium.Map(location=[centro_lat, centro_lon], zoom_start=11)
         
         for prop in propiedades:
-            # ✅ Usar coordenadas reales de cada propiedad (con jitter ya aplicado)
+            # ✅ Usar coordenadas guardadas (ya tienen jitter)
             lat = prop.lat if prop.lat else ZONAS_MENDOZA.get(prop.ubicacion, ZONAS_MENDOZA["Capital"])["lat"]
             lon = prop.lon if prop.lon else ZONAS_MENDOZA.get(prop.ubicacion, ZONAS_MENDOZA["Capital"])["lon"]
             
             sup = f"{prop.metros_cuadrados:.0f} m²" if prop.metros_cuadrados else "N/A"
             exp = f"${prop.expensas:,.0f}" if prop.expensas else "N/A"
             
-            # ✅ Mostrar ubicación REAL detectada en el popup
             popup_html = f"""
             <div style="min-width:220px;font-family:sans-serif;font-size:13px">
             <b>{prop.titulo}</b><br>
@@ -1325,7 +1255,6 @@ elif st.session_state.view == "favoritos":
                 </div>""", unsafe_allow_html=True)
                 c1, c2 = st.columns(2)
                 c1.link_button("🔗 Ver", prop.url, use_container_width=True)
-                # ✅ CORRECCIÓN: key única con índice
                 if c2.button("🗑️ Quitar", key=f"rm_fav_{prop.id}_{i}", use_container_width=True):
                     st.session_state.favoritos = [f for f in st.session_state.favoritos if f.id != prop.id]
                     st.rerun()
