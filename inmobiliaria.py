@@ -1189,8 +1189,13 @@ elif st.session_state.view == "alertas":
                 c1, c2 = st.columns(2)
                 with c1:
                     f = alerta["filtros"]
-                    st.markdown(f"**Departamento:** {f['loc']}  \n**Operación:** {f['op']}  \n**Tipo:** {f['tipo']}  \n"
-                                f"**Precio:** ${f['p_min']:,} – {'Sin límite' if f['p_max']==0 else f'${f[\"p_max\"]:,}'}  \n"
+                    # Sacamos la lógica del diccionario fuera del f-string para evitar el error
+                    precio_max_str = "Sin límite" if f['p_max'] == 0 else f"${f['p_max']:,}"
+                    
+                    st.markdown(f"**Departamento:** {f['loc']}  \n"
+                                f"**Operación:** {f['op']}  \n"
+                                f"**Tipo:** {f['tipo']}  \n"
+                                f"**Precio:** ${f['p_min']:,} – {precio_max_str}  \n"
                                 f"**Dormitorios:** {f['amb'] or 'Cualquiera'}")
                 with c2:
                     st.success("✅ Activa")
