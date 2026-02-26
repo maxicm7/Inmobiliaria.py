@@ -114,32 +114,26 @@ class Propiedad:
         }
 
 # ─────────────────────────────────────────────────────────
-# LOS 18 DEPARTAMENTOS DE MENDOZA (completos)
+# ZONAS DE MENDOZA
 # ─────────────────────────────────────────────────────────
 ZONAS_MENDOZA = {
-    # Gran Mendoza
     "Capital":           {"id_inmoclick": "20",  "slug": "mendoza",          "lat": -32.8895, "lon": -68.8458},
     "Godoy Cruz":        {"id_inmoclick": "24",  "slug": "godoy-cruz",       "lat": -32.9333, "lon": -68.8500},
     "Guaymallén":        {"id_inmoclick": "23",  "slug": "guaymallen",       "lat": -32.9000, "lon": -68.7667},
     "Las Heras":         {"id_inmoclick": "22",  "slug": "las-heras",        "lat": -32.8500, "lon": -68.8333},
     "Luján de Cuyo":     {"id_inmoclick": "25",  "slug": "lujan-de-cuyo",    "lat": -33.0333, "lon": -68.8833},
     "Maipú":             {"id_inmoclick": "21",  "slug": "maipu",            "lat": -32.9833, "lon": -68.7833},
-    # Gran Mendoza extendida
     "Chacras de Coria":  {"id_inmoclick": "322", "slug": "chacras-de-coria", "lat": -33.0167, "lon": -68.9000},
     "Villa Nueva":       {"id_inmoclick": "26",  "slug": "villa-nueva",      "lat": -32.9167, "lon": -68.8000},
-    # Este mendocino
     "Rivadavia":         {"id_inmoclick": "27",  "slug": "rivadavia",        "lat": -33.1833, "lon": -68.4667},
     "San Martín":        {"id_inmoclick": "28",  "slug": "san-martin",       "lat": -33.0833, "lon": -68.4667},
     "Junín":             {"id_inmoclick": "29",  "slug": "junin",            "lat": -33.1333, "lon": -68.5833},
     "Santa Rosa":        {"id_inmoclick": "35",  "slug": "santa-rosa",       "lat": -33.1667, "lon": -68.1667},
     "La Paz":            {"id_inmoclick": "36",  "slug": "la-paz",           "lat": -33.4667, "lon": -67.5500},
-    # Norte mendocino
     "Lavalle":           {"id_inmoclick": "33",  "slug": "lavalle",          "lat": -32.7167, "lon": -68.0167},
-    # Valle de Uco
     "Tunuyán":           {"id_inmoclick": "30",  "slug": "tunuyan",          "lat": -33.5667, "lon": -69.0167},
     "Tupungato":         {"id_inmoclick": "31",  "slug": "tupungato",        "lat": -33.3667, "lon": -69.1333},
     "San Carlos":        {"id_inmoclick": "32",  "slug": "san-carlos",       "lat": -33.7667, "lon": -69.0500},
-    # Sur mendocino
     "San Rafael":        {"id_inmoclick": "34",  "slug": "san-rafael",       "lat": -34.6167, "lon": -68.3333},
     "General Alvear":    {"id_inmoclick": "37",  "slug": "general-alvear",   "lat": -34.9833, "lon": -67.7000},
     "Malargüe":          {"id_inmoclick": "38",  "slug": "malargue",         "lat": -35.4667, "lon": -69.5833},
@@ -277,7 +271,7 @@ def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 2
     try:
         res = scraper.get(url, headers=headers, timeout=25)
         res.raise_for_status()
-    except Exception as e:
+    except Exception:
         return []
     
     soup = BeautifulSoup(res.text, "html.parser")
@@ -727,7 +721,7 @@ if buscar or st.session_state.view == "results":
         pag_props = todas[inicio: inicio + items_pp]
         
         cols_list = st.columns(cols_grid)
-        # CORRECCIÓN CRÍTICA: Usar enumerate para índice único en keys
+        # ✅ CORRECCIÓN CRÍTICA #1: Usar enumerate para índice único en keys
         for i, prop in enumerate(pag_props):
             with cols_list[i % cols_grid]:
                 es_fav = any(f.id == prop.id for f in st.session_state.favoritos)
@@ -763,7 +757,7 @@ if buscar or st.session_state.view == "results":
                 b1, b2 = st.columns(2)
                 with b1:
                     lbl_fav = "⭐ Guardado" if es_fav else "☆ Guardar"
-                    # CORRECCIÓN: key única con índice para evitar StreamlitDuplicateElementKey
+                    # ✅ CORRECCIÓN CRÍTICA #1: key única con índice para evitar StreamlitDuplicateElementKey
                     if st.button(lbl_fav, key=f"fav_{prop.id}_{i}", use_container_width=True):
                         if es_fav:
                             st.session_state.favoritos = [f for f in st.session_state.favoritos if f.id != prop.id]
@@ -889,8 +883,8 @@ elif st.session_state.view == "stats":
                         color_continuous_scale="Viridis"
                     )
                     st.plotly_chart(fig3, use_container_width=True)
-                except Exception as e:
-                    st.warning("⚠️ No se pudo generar la línea de tendencia. Mostrando gráfico sin trendline.")
+                except Exception:
+                    # ✅ CORRECCIÓN CRÍTICA #2: Fallback si statsmodels falla
                     fig3 = px.scatter(
                         df_valid, x="M²", y="Precio_Numérico",
                         title="Precio vs Superficie", color="Dormitorios",
@@ -915,10 +909,16 @@ elif st.session_state.view == "stats":
         
         st.divider()
         st.subheader("🔍 Datos detallados")
-        cols_show = ["Portal", "Título", "Precio", "Dormitorios", "Baños", "M²", "Ubicación", "Moneda"]
+        # ✅ CORRECCIÓN CRÍTICA #3: Incluir Precio_Numérico en cols_show
+        cols_show = ["Portal", "Título", "Precio", "Precio_Numérico", "Dormitorios", "Baños", "M²", "Ubicación", "Moneda"]
         cols_exist = [c for c in cols_show if c in df.columns]
-        st.dataframe(df[cols_exist].sort_values("Precio_Numérico" if "Precio_Numérico" in df.columns else cols_exist[0]),
-            use_container_width=True, height=400)
+        
+        # ✅ CORRECCIÓN CRÍTICA #3: Ordenar por columna que existe en el dataframe filtrado
+        sort_col = "Precio_Numérico" if "Precio_Numérico" in cols_exist else (cols_exist[0] if cols_exist else None)
+        if sort_col:
+            st.dataframe(df[cols_exist].sort_values(sort_col), use_container_width=True, height=400)
+        else:
+            st.dataframe(df[cols_exist], use_container_width=True, height=400)
         
         if st.button("🔙 Volver a resultados"):
             st.session_state.view = "results"
@@ -1155,7 +1155,7 @@ elif st.session_state.view == "favoritos":
                 </div>""", unsafe_allow_html=True)
                 c1, c2 = st.columns(2)
                 c1.link_button("🔗 Ver", prop.url, use_container_width=True)
-                # CORRECCIÓN: key única con índice
+                # ✅ CORRECCIÓN CRÍTICA #4: key única con índice
                 if c2.button("🗑️ Quitar", key=f"rm_fav_{prop.id}_{i}", use_container_width=True):
                     st.session_state.favoritos = [f for f in st.session_state.favoritos if f.id != prop.id]
                     st.rerun()
