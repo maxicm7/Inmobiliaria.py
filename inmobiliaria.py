@@ -882,12 +882,21 @@ elif st.session_state.view == "stats":
         with col3:
             df_valid = df[(df["M²"].notna()) & (df["M²"] > 0) & (df["Precio_Numérico"] > 0)]
             if not df_valid.empty:
-                fig3 = px.scatter(
-                    df_valid, x="M²", y="Precio_Numérico", trendline="ols",
-                    title="Precio vs Superficie", color="Dormitorios",
-                    color_continuous_scale="Viridis"
-                )
-                st.plotly_chart(fig3, use_container_width=True)
+                try:
+                    fig3 = px.scatter(
+                        df_valid, x="M²", y="Precio_Numérico", trendline="ols",
+                        title="Precio vs Superficie", color="Dormitorios",
+                        color_continuous_scale="Viridis"
+                    )
+                    st.plotly_chart(fig3, use_container_width=True)
+                except Exception as e:
+                    st.warning("⚠️ No se pudo generar la línea de tendencia. Mostrando gráfico sin trendline.")
+                    fig3 = px.scatter(
+                        df_valid, x="M²", y="Precio_Numérico",
+                        title="Precio vs Superficie", color="Dormitorios",
+                        color_continuous_scale="Viridis"
+                    )
+                    st.plotly_chart(fig3, use_container_width=True)
             else:
                 st.info("No hay datos de superficie para graficar.")
         with col4:
