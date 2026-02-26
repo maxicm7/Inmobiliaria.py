@@ -18,6 +18,8 @@ import re
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 import warnings
+import google.generativeai as genai
+
 warnings.filterwarnings('ignore')
 
 # ─────────────────────────────────────────────────────────
@@ -49,16 +51,15 @@ st.markdown("""
 .price { color: #27ae60; font-size: 22px; font-weight: 800; padding: 10px 15px 0; }
 .info { padding: 12px 15px; font-size: 13px; }
 .badge { background: #f1f2f6; padding: 4px 10px; border-radius: 6px;
-         font-size: 11px; margin-right: 4px; font-weight: 600; display: inline-block; }
+    font-size: 11px; margin-right: 4px; font-weight: 600; display: inline-block; }
 .stats-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-              color: white; padding: 20px; border-radius: 12px; }
+    color: white; padding: 20px; border-radius: 12px; }
 .rec-card { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-            color: white; padding: 18px; border-radius: 12px; margin-bottom: 10px; }
+    color: white; padding: 18px; border-radius: 12px; margin-bottom: 10px; }
 .trend-card { background: linear-gradient(135deg, #a1c4fd 0%, #c2e9fb 100%);
-              padding: 18px; border-radius: 12px; }
+    padding: 18px; border-radius: 12px; }
 </style>
 """, unsafe_allow_html=True)
-
 
 # ─────────────────────────────────────────────────────────
 # MODELO DE DATOS
@@ -86,7 +87,7 @@ class Propiedad:
     moneda: str = "ARS"
     tipo_operacion: str = "Venta"
     tipo_propiedad: str = "Departamento"
-
+    
     def to_dict(self):
         return {
             "ID": self.id,
@@ -111,7 +112,6 @@ class Propiedad:
             "Tipo_Operación": self.tipo_operacion,
             "Tipo_Propiedad": self.tipo_propiedad,
         }
-
 
 # ─────────────────────────────────────────────────────────
 # LOS 18 DEPARTAMENTOS DE MENDOZA (completos)
@@ -145,7 +145,6 @@ ZONAS_MENDOZA = {
     "Malargüe":          {"id_inmoclick": "38",  "slug": "malargue",         "lat": -35.4667, "lon": -69.5833},
 }
 
-# Agrupar por región para mostrar en sidebar
 REGIONES_MENDOZA = {
     "🏙️ Gran Mendoza": ["Capital", "Godoy Cruz", "Guaymallén", "Las Heras", "Luján de Cuyo", "Maipú", "Chacras de Coria", "Villa Nueva"],
     "🌾 Este Mendocino": ["Rivadavia", "San Martín", "Junín", "Santa Rosa", "La Paz"],
@@ -154,55 +153,42 @@ REGIONES_MENDOZA = {
     "🌵 Sur Mendocino": ["San Rafael", "General Alvear", "Malargüe"],
 }
 
-
 # ─────────────────────────────────────────────────────────
 # FUNCIONES DE UTILIDAD
 # ─────────────────────────────────────────────────────────
 def extraer_precio_numerico(precio_str: str) -> float:
-    """Extrae valor numérico del precio con soporte ARS/USD."""
     if not precio_str:
         return 0.0
     texto = precio_str.lower().strip()
     if any(p in texto for p in ["consultar", "a convenir", "precio a", "sin precio"]):
         return 0.0
-
     es_usd = any(s in texto for s in ["usd", "u$s", "us$", "dólar", "dollar"])
     texto_limpio = re.sub(r"[^\d.,]", " ", texto).strip()
-
-    # Detectar formato: si hay puntos como separador de miles y coma decimal (formato AR)
-    # Ejemplo: "1.500.000" → 1500000  /  "1.500,50" → 1500.50
     numeros = re.findall(r"[\d.,]+", texto_limpio)
     if not numeros:
         return 0.0
-
     num_str = numeros[0]
     try:
-        # Formato con punto como miles y coma como decimal → "1.500,50"
         if "." in num_str and "," in num_str:
             if num_str.index(".") < num_str.index(","):
                 num_str = num_str.replace(".", "").replace(",", ".")
             else:
                 num_str = num_str.replace(",", "")
         elif "." in num_str:
-            # Puede ser miles (ej. "1.500.000") o decimal (ej. "1500.50")
             partes = num_str.split(".")
-            if all(len(p) == 3 for p in partes[1:]):  # separador de miles
+            if all(len(p) == 3 for p in partes[1:]):
                 num_str = num_str.replace(".", "")
-            # si no, lo dejamos como está (decimal)
         elif "," in num_str:
             num_str = num_str.replace(",", ".")
-
         valor = float(num_str)
         if es_usd:
-            valor *= 1150  # Tipo de cambio aproximado 2026 (ajustable)
+            valor *= 1150
         return valor
     except (ValueError, IndexError):
         return 0.0
 
-
 def generar_id(portal: str, titulo: str, precio: str) -> str:
     return hashlib.md5(f"{portal}{titulo}{precio}".encode()).hexdigest()[:16]
-
 
 def extraer_metros_cuadrados(texto: str) -> Optional[float]:
     if not texto:
@@ -215,7 +201,6 @@ def extraer_metros_cuadrados(texto: str) -> Optional[float]:
             pass
     return None
 
-
 def extraer_expensas(texto: str) -> Optional[float]:
     if not texto:
         return None
@@ -227,49 +212,36 @@ def extraer_expensas(texto: str) -> Optional[float]:
             pass
     return None
 
-
 def imagen_valida(url: str) -> bool:
     if not url:
         return False
     invalidos = ["base64", "placeholder", "noimage", "nophoto", "blank", "undefined"]
     return not any(inv in url.lower() for inv in invalidos)
 
-
 PLACEHOLDER_IMG = "https://via.placeholder.com/400x250/cccccc/666666?text=Sin+imagen"
-
 
 # ─────────────────────────────────────────────────────────
 # CONSTRUCCIÓN DE URLs
 # ─────────────────────────────────────────────────────────
 def construir_url(portal: str, filtros: dict) -> str:
-    """Construye la URL de búsqueda para cada portal."""
     op = "alquiler" if filtros["op"] == "Alquiler" else "venta"
     tipo = filtros["tipo"].lower().replace(" ", "-")
     zona = ZONAS_MENDOZA[filtros["loc"]]
-
+    
     if portal == "Inmoup":
-        url = (
-            f"https://www.inmoup.com.ar/{tipo}s-en-{op}"
-            f"?grupo={tipo}s&condicion={op}"
-            f"&q={quote(filtros['loc'])}&moneda=1&favoritos=0&limit=24"
-        )
+        url = f"https://www.inmoup.com.ar/{tipo}s-en-{op}?grupo={tipo}s&condicion={op}&q={quote(filtros['loc'])}&moneda=1&favoritos=0&limit=24"
         if filtros["p_max"] > 0:
             url += f"&precio%5Bmax%5D={filtros['p_max']}"
         if filtros["exp_max"] > 0:
             url += f"&expensas%5Bmax%5D={filtros['exp_max']}"
         return url
-
     elif portal == "Inmoclick":
-        url = (
-            f"https://www.inmoclick.com.ar/inmuebles/{op}/{tipo}s"
-            f"?localidades={zona['id_inmoclick']}&moneda=1"
-        )
+        url = f"https://www.inmoclick.com.ar/inmuebles/{op}/{tipo}s?localidades={zona['id_inmoclick']}&moneda=1"
         if filtros["p_max"] > 0:
             url += f"&precio%5Bmax%5D={filtros['p_max']}"
         if filtros["amb"] > 0:
             url += f"&dormitorios={filtros['amb']}"
         return url
-
     elif portal == "Argenprop":
         slug_tipo = tipo.replace("-", "")
         url = f"https://www.argenprop.com/{slug_tipo}-{op}-localidad-{zona['slug']}-mendoza"
@@ -278,7 +250,6 @@ def construir_url(portal: str, filtros: dict) -> str:
         if filtros.get("apto"):
             url += "-apto-credito"
         return url
-
     elif portal == "Zonaprop":
         slug_loc = zona["slug"]
         url = f"https://www.zonaprop.com.ar/inmuebles-{op}-mendoza"
@@ -286,95 +257,62 @@ def construir_url(portal: str, filtros: dict) -> str:
             url += f"-{slug_loc}"
         url += ".html"
         return url
-
     return ""
 
-
 # ─────────────────────────────────────────────────────────
-# SCRAPING  (BUG CRÍTICO CORREGIDO: filtros ahora es parámetro)
+# SCRAPING
 # ─────────────────────────────────────────────────────────
 @st.cache_data(ttl=1800, show_spinner=False)
 def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 20) -> list:
-    """
-    Scrapea un portal y retorna lista de dicts (serializables para cache).
-    filtros_json: json string del dict filtros (para que @st.cache_data pueda hashear).
-    """
-    filtros = json.loads(filtros_json)  # deserializar
+    filtros = json.loads(filtros_json)
     scraper = cloudscraper.create_scraper(
         browser={"browser": "chrome", "platform": "windows", "mobile": False}
     )
     headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/122.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "es-AR,es;q=0.9",
         "Connection": "keep-alive",
     }
-
     try:
         res = scraper.get(url, headers=headers, timeout=25)
         res.raise_for_status()
     except Exception as e:
-        return []  # retornar vacío; el error se muestra en la UI
-
+        return []
+    
     soup = BeautifulSoup(res.text, "html.parser")
-
-    # ── Selectores por portal ──────────────────────────────
     SELECTORES = {
         "Inmoclick": ["article.property-item", "div.property-item", "li.property-item"],
         "Inmoup":    ["article.property-item", ".item-property", ".prop-item", "article", ".item"],
-        "Zonaprop":  [
-            'div[data-qa="posting PROPERTY"]',
-            'div[data-qa="posting-card"]',
-            ".postingCard",
-            ".posting-card-container",
-            'div[data-qa*="posting"]',
-        ],
+        "Zonaprop":  ['div[data-qa="posting PROPERTY"]', 'div[data-qa="posting-card"]', ".postingCard", ".posting-card-container", 'div[data-qa*="posting"]'],
         "Argenprop": [".listing__item", ".list__item", ".card", "article"],
     }
-
+    
     items = []
     for selector in SELECTORES.get(portal, ["article"]):
         items = soup.select(selector)
         if items:
             break
-
     if not items:
         return []
-
+    
     propiedades_dict = []
-
     for item in items[:max_items]:
         try:
             texto_completo = item.get_text(" ", strip=True)
-
-            # ── Precio ────────────────────────────────────────
-            price_sel = [
-                '[data-qa="POSTING_CARD_PRICE"]', ".posting-card__price",
-                ".price-value", ".card__price", ".item-price",
-                ".price", ".listing__price", "span.price"
-            ]
+            price_sel = ['[data-qa="POSTING_CARD_PRICE"]', ".posting-card__price", ".price-value", ".card__price", ".item-price", ".price", ".listing__price", "span.price"]
             precio_texto = "Consultar"
             for sel in price_sel:
                 el = item.select_one(sel)
                 if el and el.text.strip():
                     precio_texto = el.text.strip()
                     break
-            # Fallback: buscar patrón $xxx.xxx en texto
             if precio_texto == "Consultar":
                 m = re.search(r"\$\s*[\d.,]+", texto_completo)
                 if m:
                     precio_texto = m.group(0).strip()
-
-            # ── Título / Dirección ─────────────────────────────
-            titulo_sel = [
-                '[data-qa="POSTING_CARD_ADDRESS"]', ".posting-card__title",
-                ".card__address", ".card__title--address",
-                ".listing__title", ".property-title", "h2", "h3", ".title"
-            ]
+            
+            titulo_sel = ['[data-qa="POSTING_CARD_ADDRESS"]', ".posting-card__title", ".card__address", ".card__title--address", ".listing__title", ".property-title", "h2", "h3", ".title"]
             titulo = ""
             for sel in titulo_sel:
                 el = item.select_one(sel)
@@ -388,8 +326,7 @@ def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 2
                     titulo = alt.split("·")[0].strip()[:100] if alt else ""
             if not titulo:
                 titulo = f"Propiedad {portal}"
-
-            # ── Imagen ────────────────────────────────────────
+            
             img_url = PLACEHOLDER_IMG
             img_tag = item.find("img")
             if img_tag:
@@ -398,19 +335,14 @@ def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 2
                     if candidate and imagen_valida(candidate):
                         img_url = candidate.split("?")[0]
                         break
-
-            # ── URL del aviso ─────────────────────────────────
+            
             link_tag = item.find("a", href=True)
             aviso_url = urljoin(url, link_tag["href"]) if link_tag else url
-
-            # ── Metros cuadrados ──────────────────────────────
+            
             metros = extraer_metros_cuadrados(texto_completo)
-
-            # ── Expensas ──────────────────────────────────────
             expensas = extraer_expensas(texto_completo)
-
             precio_num = extraer_precio_numerico(precio_texto)
-
+            
             prop_dict = {
                 "id": generar_id(portal, titulo, precio_texto),
                 "portal": portal,
@@ -435,15 +367,11 @@ def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 2
                 "tipo_propiedad": filtros["tipo"],
             }
             propiedades_dict.append(prop_dict)
-
         except Exception:
             continue
-
     return propiedades_dict
 
-
 def dicts_to_propiedades(dicts: list) -> List[Propiedad]:
-    """Convierte lista de dicts (del cache) a objetos Propiedad."""
     result = []
     for d in dicts:
         p = Propiedad(
@@ -461,7 +389,6 @@ def dicts_to_propiedades(dicts: list) -> List[Propiedad]:
         result.append(p)
     return result
 
-
 # ─────────────────────────────────────────────────────────
 # ANALIZADOR
 # ─────────────────────────────────────────────────────────
@@ -469,7 +396,7 @@ class AnalizadorInmobiliario:
     def __init__(self, propiedades: List[Propiedad]):
         self.propiedades = propiedades
         self.df = pd.DataFrame([p.to_dict() for p in propiedades])
-
+    
     def estadisticas_basicas(self) -> dict:
         precios = self.df["Precio_Numérico"].replace(0, np.nan).dropna()
         if precios.empty:
@@ -485,7 +412,7 @@ class AnalizadorInmobiliario:
             "q1": precios.quantile(0.25),
             "q3": precios.quantile(0.75),
         }
-
+    
     def detectar_outliers(self) -> dict:
         precios = self.df["Precio_Numérico"].replace(0, np.nan).dropna()
         if precios.empty:
@@ -500,7 +427,7 @@ class AnalizadorInmobiliario:
             "inferior": lo,
             "superior": hi,
         }
-
+    
     def recomendaciones(self) -> list:
         recs = []
         stats = self.estadisticas_basicas()
@@ -509,26 +436,21 @@ class AnalizadorInmobiliario:
         outliers = self.detectar_outliers()
         recs.append({
             "nivel": "info",
-            "texto": f"💰 Precio mediano del mercado: **${stats['mediana']:,.0f}**. "
-                     f"Propiedades en este rango suelen tener mayor rotación.",
+            "texto": f"💰 Precio mediano del mercado: **${stats['mediana']:,.0f}**. Propiedades en este rango suelen tener mayor rotación.",
         })
         if outliers["porcentaje"] > 5:
             recs.append({
                 "nivel": "warning",
-                "texto": f"⚠️ Hay **{outliers['cantidad']} propiedades** ({outliers['porcentaje']}%) "
-                         f"con precios fuera del rango normal "
-                         f"(${outliers['inferior']:,.0f} – ${outliers['superior']:,.0f}). "
-                         "Revisalas para detectar oportunidades o precios erróneos.",
+                "texto": f"⚠️ Hay **{outliers['cantidad']} propiedades** ({outliers['porcentaje']}%) con precios fuera del rango normal (${outliers['inferior']:,.0f} – ${outliers['superior']:,.0f}). Revisalas para detectar oportunidades o precios erróneos.",
             })
         if stats["desviacion"] / stats["promedio"] > 0.3:
             cv = round(stats["desviacion"] / stats["promedio"] * 100, 1)
             recs.append({
                 "nivel": "info",
-                "texto": f"📊 Alta variabilidad de precios (CV: {cv}%). "
-                         "El mercado ofrece opciones muy diversas en este segmento.",
+                "texto": f"📊 Alta variabilidad de precios (CV: {cv}%). El mercado ofrece opciones muy diversas en este segmento.",
             })
         return recs
-
+    
     def precio_por_m2(self):
         df_v = self.df[(self.df["M²"].notna()) & (self.df["M²"] > 0) & (self.df["Precio_Numérico"] > 0)].copy()
         if df_v.empty:
@@ -542,6 +464,41 @@ class AnalizadorInmobiliario:
             "correlacion": df_v[["Precio_Numérico", "M²"]].corr().iloc[0, 1],
         }
 
+# ─────────────────────────────────────────────────────────
+# FUNCIONES GEMINI AI
+# ─────────────────────────────────────────────────────────
+def procesar_busqueda_gemini(api_key: str, urls: str, prompt: str) -> str:
+    """Procesa la búsqueda utilizando la API de Gemini"""
+    if not api_key:
+        raise ValueError("API Key no proporcionada")
+    
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        full_prompt = f"""
+        Actúa como un experto asesor inmobiliario con años de experiencia en Mendoza, Argentina.
+        
+        CONTEXTO:
+        El usuario está buscando propiedades y ha proporcionado las siguientes fuentes (URLs de portales):
+        {urls}
+        
+        SOLICITUD DEL USUARIO:
+        {prompt}
+        
+        INSTRUCCIONES:
+        1. Analiza los requisitos de búsqueda.
+        2. Recomienda qué tipo de propiedades buscar en esos portales.
+        3. Da consejos sobre precios de mercado para esa zona.
+        4. Formato: Usa markdown con negritas y listas para que sea legible.
+        
+        RESPUESTA:
+        """
+        
+        response = model.generate_content(full_prompt)
+        return response.text
+    except Exception as e:
+        raise Exception(f"Error al conectar con Gemini: {str(e)}")
 
 # ─────────────────────────────────────────────────────────
 # ESTADO DE SESIÓN
@@ -556,58 +513,55 @@ defaults = {
     "datos_mapa": [],
     "datos_predictivo": [],
     "pagina": 1,
+    "gemini_api_key": "",
+    "gemini_results": None,
 }
+
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
-
 
 # ─────────────────────────────────────────────────────────
 # SIDEBAR
 # ─────────────────────────────────────────────────────────
 with st.sidebar:
     st.title("⚙️ Filtros de búsqueda")
-
-    # Selección de departamento con regiones agrupadas
+    
     st.markdown("**📍 Departamento**")
     region_sel = st.selectbox("Región", list(REGIONES_MENDOZA.keys()), label_visibility="collapsed")
     loc = st.selectbox("Departamento", REGIONES_MENDOZA[region_sel])
-
     op = st.radio("💰 Operación", ["Alquiler", "Venta"], horizontal=True)
     tipo = st.selectbox(
         "🏠 Tipo de Inmueble",
         ["Departamento", "Casa", "PH", "Terreno", "Local Comercial", "Oficina", "Cochera", "Quinta"]
     )
-
+    
     st.divider()
-
     col_p1, col_p2 = st.columns(2)
     with col_p1:
         p_min = st.number_input("Precio mín. ($)", 0, 500_000_000, 0, step=100_000, format="%d")
     with col_p2:
         p_max = st.number_input("Precio máx. ($)", 0, 500_000_000, 0, step=100_000, format="%d")
-
     exp_max = st.number_input("💸 Expensas máx. ($)", 0, 1_000_000, 0, step=10_000, format="%d")
-
+    
     st.divider()
-
     col_a1, col_a2 = st.columns(2)
     with col_a1:
         amb = st.slider("🛏️ Dormitorios", 0, 5, 0)
     with col_a2:
         banos = st.slider("🚿 Baños", 1, 4, 1)
-
+    
     col_c1, col_c2 = st.columns(2)
     with col_c1:
         cochera = st.checkbox("🚗 Cochera")
     with col_c2:
         apto = st.checkbox("💳 Apto Crédito")
-
+    
     superficie_min = st.number_input("📏 Superficie mínima (m²)", 0, 1000, 0, step=10)
-
+    
     st.divider()
     buscar = st.button("🚀 BUSCAR PROPIEDADES", use_container_width=True, type="primary")
-
+    
     st.divider()
     if st.button("🏠 Inicio", use_container_width=True):
         st.session_state.view = "home"
@@ -618,8 +572,10 @@ with st.sidebar:
     if st.button("🔔 Alertas", use_container_width=True):
         st.session_state.view = "alertas"
         st.rerun()
-
-    # Portales a consultar
+    if st.button("🤖 IA Gemini", use_container_width=True):
+        st.session_state.view = "gemini"
+        st.rerun()
+    
     st.divider()
     st.markdown("**🌐 Portales**")
     portales_activos = st.multiselect(
@@ -628,15 +584,14 @@ with st.sidebar:
         default=["Inmoup", "Inmoclick", "Argenprop", "Zonaprop"],
         label_visibility="collapsed",
     )
-
-filtros = {
-    "loc": loc, "op": op, "tipo": tipo,
-    "p_min": p_min, "p_max": p_max, "exp_max": exp_max,
-    "amb": amb, "banos": banos, "cochera": cochera, "apto": apto,
-    "superficie_min": superficie_min,
-}
-filtros_json = json.dumps(filtros, sort_keys=True)  # hasheable para cache
-
+    
+    filtros = {
+        "loc": loc, "op": op, "tipo": tipo,
+        "p_min": p_min, "p_max": p_max, "exp_max": exp_max,
+        "amb": amb, "banos": banos, "cochera": cochera, "apto": apto,
+        "superficie_min": superficie_min,
+    }
+    filtros_json = json.dumps(filtros, sort_keys=True)
 
 # ─────────────────────────────────────────────────────────
 # PÁGINA: HOME
@@ -644,20 +599,19 @@ filtros_json = json.dumps(filtros, sort_keys=True)  # hasheable para cache
 if st.session_state.view == "home" and not buscar:
     st.markdown("""
     <div class="hero-section">
-        <h1 style="font-size:50px;font-weight:900;margin-bottom:10px;">🍷 MENDOZA INMUEBLES PRO</h1>
-        <p style="font-size:20px;opacity:0.9;">Buscador inteligente de propiedades en los 18 departamentos de Mendoza</p>
-        <p style="font-size:14px;opacity:0.7;">Inmoup · Inmoclick · Argenprop · Zonaprop — Datos en tiempo real</p>
+    <h1 style="font-size:50px;font-weight:900;margin-bottom:10px;">🍷 MENDOZA INMUEBLES PRO</h1>
+    <p style="font-size:20px;opacity:0.9;">Buscador inteligente de propiedades en los 18 departamentos de Mendoza</p>
+    <p style="font-size:14px;opacity:0.7;">Inmoup · Inmoclick · Argenprop · Zonaprop — Datos en tiempo real</p>
     </div>
     """, unsafe_allow_html=True)
-
+    
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Portales integrados", "4", "✓")
     col2.metric("Departamentos", "20", "✓ (todos)")
     col3.metric("Cache de datos", "30 min", "⚡")
     col4.metric("Regiones", "5", "📍")
-
+    
     st.divider()
-
     col_r1, col_r2, col_r3 = st.columns(3)
     with col_r1:
         st.markdown('<div class="stats-card"><h3>📊 Análisis estadístico</h3><p>Distribución de precios, outliers, correlaciones y resumen ejecutivo.</p></div>', unsafe_allow_html=True)
@@ -665,84 +619,74 @@ if st.session_state.view == "home" and not buscar:
         st.markdown('<div class="rec-card"><h3>🗺️ Mapa interactivo</h3><p>Visualiza las propiedades sobre el mapa de Mendoza con filtros en tiempo real.</p></div>', unsafe_allow_html=True)
     with col_r3:
         st.markdown('<div class="trend-card"><h3>🤖 Predicción de precios</h3><p>Modelos ML para estimar el valor de una propiedad por sus características.</p></div>', unsafe_allow_html=True)
-
+    
     st.divider()
     st.markdown("### 📍 Departamentos disponibles")
     for region, deptos in REGIONES_MENDOZA.items():
         st.markdown(f"**{region}:** {' · '.join(deptos)}")
-
+    
     st.divider()
     if st.button("🚀 Comenzar búsqueda", use_container_width=True, type="primary"):
         buscar = True
-
 
 # ─────────────────────────────────────────────────────────
 # PÁGINA: RESULTADOS
 # ─────────────────────────────────────────────────────────
 if buscar or st.session_state.view == "results":
     st.session_state.view = "results"
-    st.session_state.pagina = 1  # reset paginación en cada nueva búsqueda
-
+    st.session_state.pagina = 1
     st.header(f"🏘️ {tipo}s en {op} — {loc}")
-
+    
     with st.expander("📋 Filtros aplicados", expanded=False):
         c1, c2, c3 = st.columns(3)
-        c1.write(f"**Ubicación:** {loc}  \n**Operación:** {op}  \n**Tipo:** {tipo}")
-        c2.write(f"**Precio:** ${p_min:,} – {'Sin límite' if p_max == 0 else f'${p_max:,}'}  \n**Expensas máx.:** {'Sin límite' if exp_max == 0 else f'${exp_max:,}'}")
-        c3.write(f"**Dormitorios:** {amb if amb > 0 else 'Cualquiera'}  \n**Baños:** {banos}  \n**Cochera:** {'Sí' if cochera else 'No'}")
-
+        c1.write(f"**Ubicación:** {loc}\n\n**Operación:** {op}\n\n**Tipo:** {tipo}")
+        c2.write(f"**Precio:** ${p_min:,} – {'Sin límite' if p_max == 0 else f'${p_max:,}'}\n\n**Expensas máx.:** {'Sin límite' if exp_max == 0 else f'${exp_max:,}'}")
+        c3.write(f"**Dormitorios:** {amb if amb > 0 else 'Cualquiera'}\n\n**Baños:** {banos}\n\n**Cochera:** {'Sí' if cochera else 'No'}")
+    
     progress = st.progress(0)
     status = st.empty()
     todas_dicts = []
-
+    
     for idx, portal in enumerate(portales_activos):
         status.text(f"🔍 Buscando en {portal}...")
         progress.progress(int((idx / len(portales_activos)) * 100))
-
         url_portal = construir_url(portal, filtros)
-
         with st.expander(f"🔗 URL {portal}", expanded=False):
             st.code(url_portal)
-
         try:
             dicts = scrapear_portal(portal, url_portal, filtros_json, max_items=18)
             todas_dicts.extend(dicts)
             if dicts:
                 st.success(f"✓ {portal}: {len(dicts)} resultados")
             else:
-                st.warning(f"⚠️ {portal}: sin resultados (puede ser problema del sitio o selector desactualizado)")
+                st.warning(f"⚠️ {portal}: sin resultados")
         except Exception as e:
             st.error(f"❌ {portal}: {e}")
-
+    
     progress.progress(100)
     status.text("✅ Búsqueda completada")
     time.sleep(0.5)
     progress.empty()
     status.empty()
-
-    # Convertir a objetos
+    
     todas = dicts_to_propiedades(todas_dicts)
-
-    # Filtros post-scraping
+    
     if p_min > 0:
         todas = [p for p in todas if p.precio_numerico == 0 or p.precio_numerico >= p_min]
     if p_max > 0:
         todas = [p for p in todas if p.precio_numerico == 0 or p.precio_numerico <= p_max]
     if superficie_min > 0:
         todas = [p for p in todas if p.metros_cuadrados and p.metros_cuadrados >= superficie_min]
-
-    # Guardar en sesión para otras páginas
+    
     st.session_state.datos_stats = todas
     st.session_state.datos_mapa = todas
     st.session_state.datos_predictivo = todas
     st.session_state.historial.append({"fecha": datetime.now().isoformat(), "filtros": filtros, "total": len(todas)})
-
+    
     st.subheader(f"📊 {len(todas)} propiedades encontradas")
-
+    
     if todas:
         analizador = AnalizadorInmobiliario(todas)
-
-        # Recomendaciones
         recs = analizador.recomendaciones()
         if recs:
             st.subheader("💡 Recomendaciones")
@@ -751,8 +695,7 @@ if buscar or st.session_state.view == "results":
                     st.info(r["texto"])
                 else:
                     st.warning(r["texto"])
-
-        # Estadísticas rápidas
+        
         stats = analizador.estadisticas_basicas()
         if stats:
             c1, c2, c3, c4 = st.columns(4)
@@ -760,17 +703,14 @@ if buscar or st.session_state.view == "results":
             c2.metric("Precio Mediano", f"${stats['mediana']:,.0f}")
             c3.metric("Desviación Estándar", f"${stats['desviacion']:,.0f}")
             c4.metric("Con Precio", f"{stats['con_precio']}/{stats['total']}")
-
+        
         st.divider()
-
-        # Controles de visualización
         cc1, cc2, cc3 = st.columns([2, 2, 2])
         with cc1:
             orden = st.selectbox("Ordenar por:", ["Precio ↑", "Precio ↓", "M² ↑", "M² ↓", "Sin ordenar"])
         with cc2:
             cols_grid = st.selectbox("Columnas:", [3, 4, 2], index=1)
-
-        # Ordenar
+        
         if orden == "Precio ↑":
             todas.sort(key=lambda x: x.precio_numerico if x.precio_numerico > 0 else float("inf"))
         elif orden == "Precio ↓":
@@ -779,17 +719,15 @@ if buscar or st.session_state.view == "results":
             todas.sort(key=lambda x: x.metros_cuadrados if x.metros_cuadrados else float("inf"))
         elif orden == "M² ↓":
             todas.sort(key=lambda x: x.metros_cuadrados if x.metros_cuadrados else 0, reverse=True)
-
-        # Paginación
+        
         items_pp = 12
         total_pags = max(1, (len(todas) - 1) // items_pp + 1)
         pag = st.session_state.get("pagina", 1)
-
         inicio = (pag - 1) * items_pp
         pag_props = todas[inicio: inicio + items_pp]
-
-        # Grid de propiedades
+        
         cols_list = st.columns(cols_grid)
+        # CORRECCIÓN CRÍTICA: Usar enumerate para índice único en keys
         for i, prop in enumerate(pag_props):
             with cols_list[i % cols_grid]:
                 es_fav = any(f.id == prop.id for f in st.session_state.favoritos)
@@ -802,30 +740,31 @@ if buscar or st.session_state.view == "results":
                 pm2_badge = f'<span class="badge">💲 {precio_m2}</span>' if precio_m2 else ""
                 exp_text = f"${prop.expensas:,.0f}" if prop.expensas else "—"
                 moneda_badge = f'<span class="badge">🪙 {prop.moneda}</span>'
-
+                
                 st.markdown(f"""
                 <div class="card">
-                    <img src="{prop.imagen}" class="card-img" onerror="this.src='{PLACEHOLDER_IMG}'">
-                    <div class="price">{prop.precio}</div>
-                    <div class="info">
-                        <p style="font-weight:600;margin:0 0 6px;">{prop.titulo}</p>
-                        <p style="color:#888;font-size:12px;margin:0 0 8px;">📍 {prop.ubicacion} · {prop.portal}</p>
-                        <div style="margin-bottom:8px;">
-                            <span class="badge">🛏️ {prop.dormitorios or "—"}</span>
-                            <span class="badge">🚿 {prop.banos}</span>
-                            {m2_badge}{pm2_badge}{moneda_badge}
-                        </div>
-                        <p style="font-size:11px;color:#666;margin:0;">
-                            🚗 Cochera: {"Sí" if prop.cochera else "No"} &nbsp;|&nbsp; 💸 Expensas: {exp_text}
-                        </p>
-                    </div>
+                <img src="{prop.imagen}" class="card-img" onerror="this.src='{PLACEHOLDER_IMG}'">
+                <div class="price">{prop.precio}</div>
+                <div class="info">
+                <p style="font-weight:600;margin:0 0 6px;">{prop.titulo}</p>
+                <p style="color:#888;font-size:12px;margin:0 0 8px;">📍 {prop.ubicacion} · {prop.portal}</p>
+                <div style="margin-bottom:8px;">
+                <span class="badge">🛏️ {prop.dormitorios or "—"}</span>
+                <span class="badge">🚿 {prop.banos}</span>
+                {m2_badge}{pm2_badge}{moneda_badge}
+                </div>
+                <p style="font-size:11px;color:#666;margin:0;">
+                🚗 Cochera: {"Sí" if prop.cochera else "No"} &nbsp;|&nbsp; 💸 Expensas: {exp_text}
+                </p>
+                </div>
                 </div>
                 """, unsafe_allow_html=True)
-
+                
                 b1, b2 = st.columns(2)
                 with b1:
                     lbl_fav = "⭐ Guardado" if es_fav else "☆ Guardar"
-                    if st.button(lbl_fav, key=f"fav_{prop.id}", use_container_width=True):
+                    # CORRECCIÓN: key única con índice para evitar StreamlitDuplicateElementKey
+                    if st.button(lbl_fav, key=f"fav_{prop.id}_{i}", use_container_width=True):
                         if es_fav:
                             st.session_state.favoritos = [f for f in st.session_state.favoritos if f.id != prop.id]
                         else:
@@ -833,8 +772,7 @@ if buscar or st.session_state.view == "results":
                         st.rerun()
                 with b2:
                     st.link_button("🔗 Ver", prop.url, use_container_width=True)
-
-        # Controles de paginación
+        
         if total_pags > 1:
             st.divider()
             pc1, pc2, pc3 = st.columns([1, 3, 1])
@@ -848,8 +786,7 @@ if buscar or st.session_state.view == "results":
                 if st.button("Siguiente ▶") and pag < total_pags:
                     st.session_state.pagina = pag + 1
                     st.rerun()
-
-        # Acciones globales
+        
         st.divider()
         ac1, ac2, ac3, ac4 = st.columns(4)
         with ac1:
@@ -872,12 +809,10 @@ if buscar or st.session_state.view == "results":
                     "activo": True,
                 })
                 st.success("✅ Alerta creada!")
-
-        # Exportar
+        
         st.divider()
         st.subheader("📤 Exportar datos")
         df_export = pd.DataFrame([p.to_dict() for p in todas])
-
         ec1, ec2 = st.columns(2)
         with ec1:
             csv_bytes = df_export.to_csv(index=False).encode("utf-8")
@@ -899,16 +834,14 @@ if buscar or st.session_state.view == "results":
                 use_container_width=True
             )
     else:
-        st.warning("⚠️ No se encontraron propiedades. Probá ajustando los filtros o seleccionando más portales.")
-        st.info("💡 Tip: Algunos portales pueden bloquearse temporalmente. Intentá nuevamente en unos minutos o desactivá la caché reiniciando la app.")
-
+        st.warning("⚠️ No se encontraron propiedades.")
+        st.info("💡 Tip: Algunos portales pueden bloquearse temporalmente.")
 
 # ─────────────────────────────────────────────────────────
 # PÁGINA: ESTADÍSTICAS
 # ─────────────────────────────────────────────────────────
 elif st.session_state.view == "stats":
     st.header("📊 Análisis de Mercado")
-
     propiedades = st.session_state.datos_stats
     if not propiedades:
         st.info("Realizá una búsqueda primero.")
@@ -918,8 +851,7 @@ elif st.session_state.view == "stats":
         outliers = analizador.detectar_outliers()
         pm2 = analizador.precio_por_m2()
         df = analizador.df
-
-        # Métricas
+        
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Total", stats.get("total", 0))
         c2.metric("Promedio", f"${stats.get('promedio', 0):,.0f}")
@@ -927,9 +859,8 @@ elif st.session_state.view == "stats":
         c4.metric("Desv. Std.", f"${stats.get('desviacion', 0):,.0f}")
         cv = stats["desviacion"] / stats["promedio"] * 100 if stats.get("promedio") else 0
         c5.metric("Coef. Variación", f"{cv:.1f}%")
-
+        
         st.divider()
-
         col1, col2 = st.columns(2)
         with col1:
             fig = px.histogram(
@@ -946,7 +877,7 @@ elif st.session_state.view == "stats":
             )
             fig2.update_layout(showlegend=False)
             st.plotly_chart(fig2, use_container_width=True)
-
+        
         col3, col4 = st.columns(2)
         with col3:
             df_valid = df[(df["M²"].notna()) & (df["M²"] > 0) & (df["Precio_Numérico"] > 0)]
@@ -961,9 +892,9 @@ elif st.session_state.view == "stats":
                 st.info("No hay datos de superficie para graficar.")
         with col4:
             fig4 = px.pie(df, names="Dormitorios", title="Distribución por dormitorios",
-                          color_discrete_sequence=px.colors.qualitative.Pastel)
+                color_discrete_sequence=px.colors.qualitative.Pastel)
             st.plotly_chart(fig4, use_container_width=True)
-
+        
         if pm2:
             st.divider()
             st.subheader("📐 Precio por m²")
@@ -972,62 +903,55 @@ elif st.session_state.view == "stats":
             pc2.metric("Mediana/m²", f"${pm2['mediana']:,.0f}")
             pc3.metric("Mínimo/m²", f"${pm2['min']:,.0f}")
             pc4.metric("Correlación Precio–M²", f"{pm2['correlacion']:.3f}")
-
+        
         st.divider()
         st.subheader("🔍 Datos detallados")
         cols_show = ["Portal", "Título", "Precio", "Dormitorios", "Baños", "M²", "Ubicación", "Moneda"]
         cols_exist = [c for c in cols_show if c in df.columns]
         st.dataframe(df[cols_exist].sort_values("Precio_Numérico" if "Precio_Numérico" in df.columns else cols_exist[0]),
-                     use_container_width=True, height=400)
-
-    if st.button("🔙 Volver a resultados"):
-        st.session_state.view = "results"
-        st.rerun()
-
+            use_container_width=True, height=400)
+        
+        if st.button("🔙 Volver a resultados"):
+            st.session_state.view = "results"
+            st.rerun()
 
 # ─────────────────────────────────────────────────────────
 # PÁGINA: MAPA
 # ─────────────────────────────────────────────────────────
 elif st.session_state.view == "mapa":
     st.header("🗺️ Mapa de propiedades")
-
     propiedades = st.session_state.datos_mapa
     if not propiedades:
         st.info("Realizá una búsqueda primero.")
     else:
         zona_central = ZONAS_MENDOZA.get(propiedades[0].ubicacion, ZONAS_MENDOZA["Capital"])
         mapa = folium.Map(location=[zona_central["lat"], zona_central["lon"]], zoom_start=12)
-
+        
         for prop in propiedades:
             z = ZONAS_MENDOZA.get(prop.ubicacion, ZONAS_MENDOZA["Capital"])
             lat = prop.lat or z["lat"] + np.random.uniform(-0.005, 0.005)
             lon = prop.lon or z["lon"] + np.random.uniform(-0.005, 0.005)
-
             sup = f"{prop.metros_cuadrados:.0f} m²" if prop.metros_cuadrados else "N/A"
             exp = f"${prop.expensas:,.0f}" if prop.expensas else "N/A"
-
             popup_html = f"""
             <div style="min-width:220px;font-family:sans-serif;font-size:13px">
-                <b>{prop.titulo}</b><br>
-                <span style="color:#27ae60;font-weight:bold">{prop.precio}</span><br>
-                🛏️ {prop.dormitorios} dorm. &nbsp;|&nbsp; 🚿 {prop.banos} baño<br>
-                📏 {sup} &nbsp;|&nbsp; 💸 Expensas: {exp}<br>
-                🌐 {prop.portal}<br>
-                <a href="{prop.url}" target="_blank">Ver publicación →</a>
+            <b>{prop.titulo}</b><br>
+            <span style="color:#27ae60;font-weight:bold">{prop.precio}</span><br>
+            🛏️ {prop.dormitorios} dorm. &nbsp;|&nbsp; 🚿 {prop.banos} baño<br>
+            📏 {sup} &nbsp;|&nbsp; 💸 Expensas: {exp}<br>
+            🌐 {prop.portal}<br>
+            <a href="{prop.url}" target="_blank">Ver publicación →</a>
             </div>"""
-
-            # Color según precio
             color = "green" if prop.precio_numerico > 0 and prop.precio_numerico < 50_000_000 else "red"
-
             folium.Marker(
                 location=[lat, lon],
                 popup=folium.Popup(popup_html, max_width=280),
                 icon=folium.Icon(color=color, icon="home", prefix="fa"),
                 tooltip=f"{prop.titulo[:40]} — {prop.precio}",
             ).add_to(mapa)
-
+        
         folium_static(mapa, width=1100, height=550)
-
+        
         df_mapa = pd.DataFrame([p.to_dict() for p in propiedades])
         validos = df_mapa[df_mapa["Precio_Numérico"] > 0]["Precio_Numérico"]
         if not validos.empty:
@@ -1035,18 +959,16 @@ elif st.session_state.view == "mapa":
             mc1.metric("Total en mapa", len(propiedades))
             mc2.metric("Precio promedio", f"${validos.mean():,.0f}")
             mc3.metric("Precio mediano", f"${validos.median():,.0f}")
-
-    if st.button("🔙 Volver a resultados"):
-        st.session_state.view = "results"
-        st.rerun()
-
+        
+        if st.button("🔙 Volver a resultados"):
+            st.session_state.view = "results"
+            st.rerun()
 
 # ─────────────────────────────────────────────────────────
 # PÁGINA: ANÁLISIS PREDICTIVO (ML)
 # ─────────────────────────────────────────────────────────
 elif st.session_state.view == "predictivo":
     st.header("🤖 Análisis Predictivo")
-
     propiedades = st.session_state.datos_predictivo
     if not propiedades:
         st.info("Realizá una búsqueda primero.")
@@ -1057,25 +979,21 @@ elif st.session_state.view == "predictivo":
             (df["M²"].notna()) & (df["M²"] > 0) &
             (df["Dormitorios"].notna()) & (df["Baños"].notna())
         ].copy()
-
+        
         if len(df_ml) < 5:
-            st.warning(f"Solo {len(df_ml)} propiedades con datos completos. Se necesitan al menos 5 para el análisis predictivo.")
+            st.warning(f"Solo {len(df_ml)} propiedades con datos completos.")
         else:
-            st.success(f"✅ {len(df_ml)} propiedades con datos completos disponibles para análisis.")
-
-            # ── Clustering ────────────────────────────────────
+            st.success(f"✅ {len(df_ml)} propiedades disponibles para análisis.")
+            
             try:
                 from sklearn.cluster import KMeans
                 from sklearn.preprocessing import StandardScaler
-
                 st.subheader("🎯 Segmentación K-Means")
                 n_clusters = st.slider("Número de segmentos", 2, min(8, len(df_ml)), 3)
-
                 scaler = StandardScaler()
                 X = scaler.fit_transform(df_ml[["Dormitorios", "Baños", "M²", "Precio_Numérico"]])
                 km = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
                 df_ml["Cluster"] = km.fit_predict(X).astype(str)
-
                 fig_c = px.scatter(
                     df_ml, x="M²", y="Precio_Numérico", color="Cluster",
                     size="Dormitorios", hover_data=["Portal", "Ubicación"],
@@ -1083,7 +1001,7 @@ elif st.session_state.view == "predictivo":
                     color_discrete_sequence=px.colors.qualitative.Set2
                 )
                 st.plotly_chart(fig_c, use_container_width=True)
-
+                
                 st.subheader("📊 Características por segmento")
                 seg_stats = df_ml.groupby("Cluster").agg(
                     Cantidad=("Precio_Numérico", "count"),
@@ -1093,53 +1011,120 @@ elif st.session_state.view == "predictivo":
                 ).round(1)
                 seg_stats["Precio_Prom"] = seg_stats["Precio_Prom"].apply(lambda x: f"${x:,.0f}")
                 st.dataframe(seg_stats, use_container_width=True)
-
             except ImportError:
-                st.warning("scikit-learn no instalado. `pip install scikit-learn`")
-
-            # ── Predicción de precio ──────────────────────────
+                st.warning("scikit-learn no instalado.")
+            
             try:
                 from sklearn.linear_model import LinearRegression
-
                 st.divider()
                 st.subheader("💰 Predicción de precio")
-
                 pc1, pc2, pc3 = st.columns(3)
                 pred_dorm = pc1.number_input("Dormitorios", 1, 6, 2)
                 pred_ban = pc2.number_input("Baños", 1, 4, 1)
                 pred_m2 = pc3.number_input("Superficie m²", 20, 600, 80)
-
                 X_train = df_ml[["Dormitorios", "Baños", "M²"]]
                 y_train = df_ml["Precio_Numérico"]
                 model = LinearRegression()
                 model.fit(X_train, y_train)
-
                 pred = model.predict([[pred_dorm, pred_ban, pred_m2]])[0]
                 residuos = y_train - model.predict(X_train)
                 std_err = np.std(residuos)
                 ic_lo = max(0, pred - 1.96 * std_err)
                 ic_hi = pred + 1.96 * std_err
-
                 st.success(f"**Precio estimado:** ${pred:,.0f}")
                 st.info(f"**Intervalo de confianza 95%:** ${ic_lo:,.0f} — ${ic_hi:,.0f}")
-
                 r2 = model.score(X_train, y_train)
-                st.caption(f"R² del modelo: {r2:.3f} (sobre {len(df_ml)} observaciones)")
-
+                st.caption(f"R² del modelo: {r2:.3f}")
             except ImportError:
                 st.warning("scikit-learn no instalado.")
+        
+        if st.button("🔙 Volver a resultados"):
+            st.session_state.view = "results"
+            st.rerun()
 
-    if st.button("🔙 Volver a resultados"):
-        st.session_state.view = "results"
+# ─────────────────────────────────────────────────────────
+# PÁGINA: GEMINI AI (NUEVA)
+# ─────────────────────────────────────────────────────────
+elif st.session_state.view == "gemini":
+    st.header("🤖 Asistente Inmobiliario con IA Gemini")
+    st.markdown("""
+    Utiliza **Google Gemini 1.5 Flash** para analizar portales inmobiliarios y obtener recomendaciones personalizadas.
+    
+    **Instrucciones:**
+    1. Ingresa tu API Key de Google AI Studio.
+    2. Pega las URLs de los portales que quieres analizar.
+    3. Describe qué estás buscando.
+    """)
+    
+    with st.form("gemini_search_form", clear_on_submit=False):
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            api_key_input = st.text_input(
+                "🔑 API Key de Google Gemini", 
+                value=st.session_state.gemini_api_key,
+                type="password",
+                help="Obtén tu key gratuita en https://aistudio.google.com/app/apikey"
+            )
+        with col2:
+            st.write("")
+            st.write("")
+            save_key = st.checkbox("Guardar Key", value=bool(st.session_state.gemini_api_key))
+        
+        urls_input = st.text_area(
+            "🌐 URLs de Portales Inmobiliarios", 
+            value="https://www.inmoup.com.ar, https://www.inmoclick.com.ar, https://www.argenprop.com",
+            placeholder="Ingresa las URLs separadas por comas...",
+            height=80
+        )
+        
+        prompt_input = st.text_area(
+            "📝 Tu Búsqueda / Prompt", 
+            placeholder="Ej: Busco departamentos de 2 habitaciones en Mendoza centro por menos de USD 80000 que tengan cochera...",
+            height=150
+        )
+        
+        submitted = st.form_submit_button("🚀 Ejecutar Búsqueda con IA", use_container_width=True, type="primary")
+        
+        if submitted:
+            if save_key and api_key_input:
+                st.session_state.gemini_api_key = api_key_input
+            
+            if not api_key_input:
+                st.error("❌ Por favor ingresa una API Key válida.")
+            elif not urls_input or not prompt_input:
+                st.warning("⚠️ Por favor completa las URLs y el prompt de búsqueda.")
+            else:
+                try:
+                    with st.spinner('🤖 La IA está analizando... Esto puede tomar unos segundos.'):
+                        result = procesar_busqueda_gemini(api_key_input, urls_input, prompt_input)
+                        st.session_state.gemini_results = result
+                        st.success("✅ Búsqueda completada exitosamente")
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+    
+    if st.session_state.gemini_results:
+        st.markdown("---")
+        st.subheader("📊 Resultados del Análisis")
+        st.markdown(st.session_state.gemini_results)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("📋 Copiar Respuesta", use_container_width=True):
+                st.write("Respuesta copiada al portapapeles (simulado)")
+        with col2:
+            if st.button("🗑️ Limpiar Resultados", use_container_width=True):
+                st.session_state.gemini_results = None
+                st.rerun()
+    
+    if st.button("🔙 Volver al inicio"):
+        st.session_state.view = "home"
         st.rerun()
-
 
 # ─────────────────────────────────────────────────────────
 # PÁGINA: FAVORITOS
 # ─────────────────────────────────────────────────────────
 elif st.session_state.view == "favoritos":
     st.header("⭐ Propiedades Favoritas")
-
     favs = st.session_state.favoritos
     if not favs:
         st.info("No tenés propiedades guardadas.")
@@ -1150,38 +1135,36 @@ elif st.session_state.view == "favoritos":
             with cols[i % 3]:
                 st.markdown(f"""
                 <div class="card">
-                    <img src="{prop.imagen}" class="card-img" onerror="this.src='{PLACEHOLDER_IMG}'">
-                    <div class="price">{prop.precio}</div>
-                    <div class="info">
-                        <p><b>{prop.titulo}</b></p>
-                        <p style="color:#888">📍 {prop.ubicacion} · {prop.portal}</p>
-                        <span class="badge">🛏️ {prop.dormitorios}</span>
-                        <span class="badge">🚿 {prop.banos}</span>
-                    </div>
+                <img src="{prop.imagen}" class="card-img" onerror="this.src='{PLACEHOLDER_IMG}'">
+                <div class="price">{prop.precio}</div>
+                <div class="info">
+                <p><b>{prop.titulo}</b></p>
+                <p style="color:#888">📍 {prop.ubicacion} · {prop.portal}</p>
+                <span class="badge">🛏️ {prop.dormitorios}</span>
+                <span class="badge">🚿 {prop.banos}</span>
+                </div>
                 </div>""", unsafe_allow_html=True)
                 c1, c2 = st.columns(2)
                 c1.link_button("🔗 Ver", prop.url, use_container_width=True)
-                if c2.button("🗑️ Quitar", key=f"rm_fav_{prop.id}", use_container_width=True):
+                # CORRECCIÓN: key única con índice
+                if c2.button("🗑️ Quitar", key=f"rm_fav_{prop.id}_{i}", use_container_width=True):
                     st.session_state.favoritos = [f for f in st.session_state.favoritos if f.id != prop.id]
                     st.rerun()
-
-        # Exportar favoritos
+        
         st.divider()
         df_favs = pd.DataFrame([p.to_dict() for p in favs])
         csv_favs = df_favs.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Exportar favoritos CSV", data=csv_favs,
-                           file_name="favoritos_mendoza.csv", mime="text/csv")
-
+            file_name="favoritos_mendoza.csv", mime="text/csv")
 
 # ─────────────────────────────────────────────────────────
 # PÁGINA: ALERTAS
 # ─────────────────────────────────────────────────────────
 elif st.session_state.view == "alertas":
     st.header("🔔 Alertas de Precios")
-
     alertas = st.session_state.alertas
     if not alertas:
-        st.info("No tenés alertas configuradas. Realizá una búsqueda y presioná 'Crear Alerta'.")
+        st.info("No tenés alertas configuradas.")
     else:
         st.success(f"✅ {len(alertas)} alertas activas")
         for idx, alerta in enumerate(alertas):
@@ -1189,20 +1172,17 @@ elif st.session_state.view == "alertas":
                 c1, c2 = st.columns(2)
                 with c1:
                     f = alerta["filtros"]
-                    # Sacamos la lógica del diccionario fuera del f-string para evitar el error
                     precio_max_str = "Sin límite" if f['p_max'] == 0 else f"${f['p_max']:,}"
-                    
-                    st.markdown(f"**Departamento:** {f['loc']}  \n"
-                                f"**Operación:** {f['op']}  \n"
-                                f"**Tipo:** {f['tipo']}  \n"
-                                f"**Precio:** ${f['p_min']:,} – {precio_max_str}  \n"
-                                f"**Dormitorios:** {f['amb'] or 'Cualquiera'}")
+                    st.markdown(f"**Departamento:** {f['loc']}\n\n"
+                        f"**Operación:** {f['op']}\n\n"
+                        f"**Tipo:** {f['tipo']}\n\n"
+                        f"**Precio:** ${f['p_min']:,} – {precio_max_str}\n\n"
+                        f"**Dormitorios:** {f['amb'] or 'Cualquiera'}")
                 with c2:
                     st.success("✅ Activa")
                     if st.button(f"🗑️ Eliminar", key=f"del_alerta_{idx}"):
                         st.session_state.alertas.pop(idx)
                         st.rerun()
-
 
 # ─────────────────────────────────────────────────────────
 # FOOTER
@@ -1211,7 +1191,7 @@ st.divider()
 st.markdown(
     "<p style='text-align:center;color:#999;font-size:12px;'>"
     "© 2026 Mendoza Inmuebles Pro · Datos en tiempo real (caché 30 min) · "
-    "Streamlit + Python + Scikit-learn + Plotly + Folium"
+    "Streamlit + Python + Scikit-learn + Plotly + Folium + Gemini AI"
     "</p>",
     unsafe_allow_html=True
 )
