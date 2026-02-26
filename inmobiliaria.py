@@ -156,7 +156,6 @@ def detectar_ubicacion_real(texto: str, titulo: str, loc_filtro: str) -> str:
     """
     texto_combined = f"{titulo} {texto}".lower()
     
-    # Mapeo de palabras clave a departamentos
     departamentos_mendoza = {
         "capital": "Capital",
         "mendoza centro": "Capital",
@@ -189,12 +188,10 @@ def detectar_ubicacion_real(texto: str, titulo: str, loc_filtro: str) -> str:
         "malargue": "Malargüe",
     }
     
-    # Buscar coincidencias en el texto
     for depto_key, depto_nombre in departamentos_mendoza.items():
         if depto_key in texto_combined:
             return depto_nombre
     
-    # Si no detecta nada, usar el filtro
     return loc_filtro
 
 # ─────────────────────────────────────────────────────────
@@ -265,7 +262,7 @@ def imagen_valida(url: str) -> bool:
 PLACEHOLDER_IMG = "https://via.placeholder.com/400x250/cccccc/666666?text=Sin+imagen"
 
 # ─────────────────────────────────────────────────────────
-# CONSTRUCCIÓN DE URLs
+# ✅ CONSTRUCCIÓN DE URLs (CORREGIDA para Inmoclick y Zonaprop)
 # ─────────────────────────────────────────────────────────
 def construir_url(portal: str, filtros: dict) -> str:
     op = "alquiler" if filtros["op"] == "Alquiler" else "venta"
@@ -273,19 +270,28 @@ def construir_url(portal: str, filtros: dict) -> str:
     zona = ZONAS_MENDOZA[filtros["loc"]]
     
     if portal == "Inmoup":
-        url = f"https://www.inmoup.com.ar/{tipo}s-en-{op}?grupo={tipo}s&condicion={op}&q={quote(filtros['loc'])}&moneda=1&favoritos=0&limit=24"
+        url = (
+            f"https://www.inmoup.com.ar/{tipo}s-en-{op}"
+            f"?grupo={tipo}s&condicion={op}"
+            f"&q={quote(filtros['loc'])}&moneda=1&favoritos=0&limit=24"
+        )
         if filtros["p_max"] > 0:
             url += f"&precio%5Bmax%5D={filtros['p_max']}"
         if filtros["exp_max"] > 0:
             url += f"&expensas%5Bmax%5D={filtros['exp_max']}"
         return url
+    
     elif portal == "Inmoclick":
-        url = f"https://www.inmoclick.com.ar/inmuebles/{op}/{tipo}s?localidades={zona['id_inmoclick']}&moneda=1"
+        # ✅ CORREGIDO: URL simplificada
+        base_url = "https://www.inmoclick.com.ar"
+        url = f"{base_url}/inmuebles/{op}/{tipo}s"
+        params = f"?localidades={zona['id_inmoclick']}&moneda=1"
         if filtros["p_max"] > 0:
-            url += f"&precio%5Bmax%5D={filtros['p_max']}"
+            params += f"&precio[max]={filtros['p_max']}"
         if filtros["amb"] > 0:
-            url += f"&dormitorios={filtros['amb']}"
-        return url
+            params += f"&dormitorios={filtros['amb']}"
+        return url + params
+    
     elif portal == "Argenprop":
         slug_tipo = tipo.replace("-", "")
         url = f"https://www.argenprop.com/{slug_tipo}-{op}-localidad-{zona['slug']}-mendoza"
@@ -294,42 +300,67 @@ def construir_url(portal: str, filtros: dict) -> str:
         if filtros.get("apto"):
             url += "-apto-credito"
         return url
+    
     elif portal == "Zonaprop":
+        # ✅ CORREGIDO: URL más directa
         slug_loc = zona["slug"]
-        url = f"https://www.zonaprop.com.ar/inmuebles-{op}-mendoza"
-        if slug_loc != "mendoza":
-            url += f"-{slug_loc}"
-        url += ".html"
+        if slug_loc == "mendoza":
+            url = f"https://www.zonaprop.com.ar/inmuebles-{op}-mendoza-capital.html"
+        else:
+            url = f"https://www.zonaprop.com.ar/inmuebles-{op}-mendoza-{slug_loc}.html"
         return url
+    
     return ""
 
 # ─────────────────────────────────────────────────────────
-# ✅ SCRAPING CORREGIDO (con detección de ubicación REAL)
+# ✅ SCRAPING (CORREGIDO con selectores actualizados)
 # ─────────────────────────────────────────────────────────
 @st.cache_data(ttl=1800, show_spinner=False)
 def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 20) -> list:
     filtros = json.loads(filtros_json)
+    
     scraper = cloudscraper.create_scraper(
         browser={"browser": "chrome", "platform": "windows", "mobile": False}
     )
+    
+    # ✅ HEADERS MEJORADOS
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-AR,es;q=0.9",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "es-AR,es;q=0.9,en;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
         "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
     }
+    
     try:
-        res = scraper.get(url, headers=headers, timeout=25)
+        res = scraper.get(url, headers=headers, timeout=30)
         res.raise_for_status()
+        if len(res.text) < 1000:
+            return []
     except Exception:
         return []
     
     soup = BeautifulSoup(res.text, "html.parser")
+    
+    # ✅ Selectores ACTUALIZADOS
     SELECTORES = {
-        "Inmoclick": ["article.property-item", "div.property-item", "li.property-item"],
-        "Inmoup":    ["article.property-item", ".item-property", ".prop-item", "article", ".item"],
-        "Zonaprop":  ['div[data-qa="posting PROPERTY"]', 'div[data-qa="posting-card"]', ".postingCard", ".posting-card-container"],
-        "Argenprop": [".listing__item", ".list__item", ".card", "article"],
+        "Inmoclick": [
+            "article.property-item", "div.property-item", "li.property-item",
+            ".property-item", ".item-property", "article",
+        ],
+        "Inmoup": [
+            "article.property-item", ".item-property", ".prop-item",
+            "article", ".item",
+        ],
+        "Zonaprop": [
+            'div[data-qa="posting-card"]', 'div[data-qa="posting PROPERTY"]',
+            ".postingCard", ".posting-card-container", 'div[data-qa*="posting"]',
+            ".posting-card", "article",
+        ],
+        "Argenprop": [
+            ".listing__item", ".list__item", ".card", "article", ".property-card",
+        ],
     }
     
     items = []
@@ -337,6 +368,7 @@ def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 2
         items = soup.select(selector)
         if items:
             break
+    
     if not items:
         return []
     
@@ -347,7 +379,11 @@ def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 2
             texto_completo = item.get_text(" ", strip=True)
             
             # Precio
-            price_sel = ['[data-qa="POSTING_CARD_PRICE"]', ".posting-card__price", ".price-value", ".card__price", ".item-price", ".price", ".listing__price", "span.price"]
+            price_sel = [
+                '[data-qa="POSTING_CARD_PRICE"]', ".posting-card__price",
+                ".price-value", ".card__price", ".item-price",
+                ".price", ".listing__price", "span.price", ".property-price",
+            ]
             precio_texto = "Consultar"
             for sel in price_sel:
                 el = item.select_one(sel)
@@ -359,8 +395,13 @@ def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 2
                 if m:
                     precio_texto = m.group(0).strip()
             
-            # Título / Dirección
-            titulo_sel = ['[data-qa="POSTING_CARD_ADDRESS"]', ".posting-card__title", ".card__address", ".card__title--address", ".listing__title", ".property-title", "h2", "h3", ".title"]
+            # Título
+            titulo_sel = [
+                '[data-qa="POSTING_CARD_ADDRESS"]', ".posting-card__title",
+                ".card__address", ".card__title--address",
+                ".listing__title", ".property-title", "h2", "h3", ".title",
+                ".property-address",
+            ]
             titulo = ""
             for sel in titulo_sel:
                 el = item.select_one(sel)
@@ -385,23 +426,19 @@ def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 2
                         img_url = candidate.split("?")[0]
                         break
             
-            # URL del aviso
+            # URL
             link_tag = item.find("a", href=True)
             aviso_url = urljoin(url, link_tag["href"]) if link_tag else url
             
-            # Metros cuadrados
+            # Datos adicionales
             metros = extraer_metros_cuadrados(texto_completo)
-            
-            # Expensas
             expensas = extraer_expensas(texto_completo)
-            
-            # Precio numérico
             precio_num = extraer_precio_numerico(precio_texto)
             
-            # ✅ DETECCIÓN DE UBICACIÓN REAL (CRÍTICO)
+            # ✅ DETECCIÓN DE UBICACIÓN REAL
             ubicacion_real = detectar_ubicacion_real(texto_completo, titulo, filtros["loc"])
             
-            # ✅ Obtener coordenadas con jitter aleatorio
+            # ✅ Coordenadas con jitter
             zona_data = ZONAS_MENDOZA.get(ubicacion_real, ZONAS_MENDOZA[filtros["loc"]])
             lat_jitter = zona_data["lat"] + np.random.uniform(-0.003, 0.003)
             lon_jitter = zona_data["lon"] + np.random.uniform(-0.003, 0.003)
@@ -414,15 +451,15 @@ def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 2
                 "precio_numerico": precio_num,
                 "url": aviso_url,
                 "imagen": img_url,
-                "ubicacion": ubicacion_real,  # ✅ Ubicación REAL detectada
+                "ubicacion": ubicacion_real,
                 "dormitorios": filtros["amb"],
                 "banos": filtros["banos"],
                 "cochera": filtros["cochera"],
                 "metros_cuadrados": metros,
                 "antiguedad": None,
                 "fecha_scraping": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                "lat": lat_jitter,  # ✅ Coordenadas con jitter
-                "lon": lon_jitter,  # ✅ Coordenadas con jitter
+                "lat": lat_jitter,
+                "lon": lon_jitter,
                 "descripcion": None,
                 "expensas": expensas,
                 "moneda": "USD" if any(s in precio_texto.lower() for s in ["usd", "u$s"]) else "ARS",
@@ -737,7 +774,6 @@ if buscar or st.session_state.view == "results":
     
     todas = dicts_to_propiedades(todas_dicts)
     
-    # Filtros post-scraping
     if p_min > 0:
         todas = [p for p in todas if p.precio_numerico == 0 or p.precio_numerico >= p_min]
     if p_max > 0:
@@ -771,7 +807,7 @@ if buscar or st.session_state.view == "results":
             c3.metric("Desviación Estándar", f"${stats['desviacion']:,.0f}")
             c4.metric("Con Precio", f"{stats['con_precio']}/{stats['total']}")
         
-        # ✅ Mostrar distribución por ubicación
+        # Mostrar distribución por ubicación
         ubicaciones = {}
         for p in todas:
             ubicaciones[p.ubicacion] = ubicaciones.get(p.ubicacion, 0) + 1
@@ -837,6 +873,7 @@ if buscar or st.session_state.view == "results":
                 b1, b2 = st.columns(2)
                 with b1:
                     lbl_fav = "⭐ Guardado" if es_fav else "☆ Guardar"
+                    # ✅ CORRECCIÓN: key única con índice
                     if st.button(lbl_fav, key=f"fav_{prop.id}_{i}", use_container_width=True):
                         if es_fav:
                             st.session_state.favoritos = [f for f in st.session_state.favoritos if f.id != prop.id]
@@ -955,6 +992,7 @@ elif st.session_state.view == "stats":
         with col3:
             df_valid = df[(df["M²"].notna()) & (df["M²"] > 0) & (df["Precio_Numérico"] > 0)]
             if not df_valid.empty:
+                # ✅ CORRECCIÓN: try/except para statsmodels
                 try:
                     fig3 = px.scatter(
                         df_valid, x="M²", y="Precio_Numérico", trendline="ols",
@@ -1010,7 +1048,7 @@ elif st.session_state.view == "mapa":
     if not propiedades:
         st.info("Realizá una búsqueda primero.")
     else:
-        # ✅ Calcular centro del mapa basado en todas las propiedades
+        # Calcular centro del mapa basado en todas las propiedades
         lats = [p.lat for p in propiedades if p.lat]
         lons = [p.lon for p in propiedades if p.lon]
         
@@ -1025,7 +1063,6 @@ elif st.session_state.view == "mapa":
         mapa = folium.Map(location=[centro_lat, centro_lon], zoom_start=11)
         
         for prop in propiedades:
-            # ✅ Usar coordenadas guardadas (ya tienen jitter)
             lat = prop.lat if prop.lat else ZONAS_MENDOZA.get(prop.ubicacion, ZONAS_MENDOZA["Capital"])["lat"]
             lon = prop.lon if prop.lon else ZONAS_MENDOZA.get(prop.ubicacion, ZONAS_MENDOZA["Capital"])["lon"]
             
@@ -1053,7 +1090,7 @@ elif st.session_state.view == "mapa":
         
         folium_static(mapa, width=1100, height=550)
         
-        # ✅ Mostrar estadísticas de distribución
+        # Mostrar estadísticas de distribución
         ubicaciones_mapa = {}
         for p in propiedades:
             ubicaciones_mapa[p.ubicacion] = ubicaciones_mapa.get(p.ubicacion, 0) + 1
@@ -1255,6 +1292,7 @@ elif st.session_state.view == "favoritos":
                 </div>""", unsafe_allow_html=True)
                 c1, c2 = st.columns(2)
                 c1.link_button("🔗 Ver", prop.url, use_container_width=True)
+                # ✅ CORRECCIÓN: key única con índice
                 if c2.button("🗑️ Quitar", key=f"rm_fav_{prop.id}_{i}", use_container_width=True):
                     st.session_state.favoritos = [f for f in st.session_state.favoritos if f.id != prop.id]
                     st.rerun()
