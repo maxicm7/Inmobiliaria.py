@@ -1,0 +1,10 @@
+streamlit
+cloudscraper
+beautifulsoup4
+pandas
+numpy
+plotly
+folium
+streamlit-folium
+scikit-learn
+xlsxwriter
