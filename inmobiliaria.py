@@ -152,73 +152,70 @@ REGIONES_MENDOZA = {
 # ─────────────────────────────────────────────────────────
 def validar_ubicacion_mendoza(texto: str, loc_filtro: str) -> tuple:
     """
-    Valida si la propiedad está realmente en Mendoza y coincide con el departamento filtrado.
+    Valida si la propiedad está realmente en Mendoza.
     Retorna: (es_valida, ubicacion_detectada)
     """
     if not texto:
         return False, "Desconocida"
     
-    texto = texto.lower()
+    texto_lower = texto.lower()
     
-    # Palabras clave que indican NO Mendoza
+    # 🚫 Palabras que indican NO Mendoza
     no_mendoza = [
         "buenos aires", "caba", "ciudad autónoma", "palermo", "recoleta",
         "belgrano", "caballito", "la plata", "rosario", "córdoba", "santa fe",
         "tucumán", "salta", "neuquén", "bariloche", "mar del plata",
-        "provincia de buenos aires", "gba", "gran buenos aires"
+        "provincia de buenos aires", "gba", "gran buenos aires",
+        "tigre", "san isidro", "vicente lópez", "quilmes", "avellaneda"
     ]
     
-    if any(keyword in texto for keyword in no_mendoza):
-        return False, "Fuera de Mendoza"
+    for keyword in no_mendoza:
+        if keyword in texto_lower:
+            return False, "Fuera de Mendoza"
     
-    # Departamentos de Mendoza que debemos detectar
-    departamentos_mendoza = [
-        "capital", "mendoza centro", "godoy cruz", "guaymallén", "las heras",
-        "luján de cuyo", "maipú", "chacras de coria", "villa nueva",
-        "rivadavia", "san martín", "junín", "santa rosa", "la paz",
-        "lavalle", "tunuyán", "tupungato", "san carlos", "san rafael",
-        "general alvear", "malargüe", "valle de uco", "mendocino"
-    ]
+    # ✅ Departamentos de Mendoza a detectar
+    departamentos_mendoza = {
+        "capital": "Capital",
+        "mendoza centro": "Capital",
+        "godoy cruz": "Godoy Cruz",
+        "guaymallén": "Guaymallén",
+        "las heras": "Las Heras",
+        "luján de cuyo": "Luján de Cuyo",
+        "maipú": "Maipú",
+        "chacras de coria": "Chacras de Coria",
+        "villa nueva": "Villa Nueva",
+        "rivadavia": "Rivadavia",
+        "san martín": "San Martín",
+        "junín": "Junín",
+        "santa rosa": "Santa Rosa",
+        "la paz": "La Paz",
+        "lavalle": "Lavalle",
+        "tunuyán": "Tunuyán",
+        "tupungato": "Tupungato",
+        "san carlos": "San Carlos",
+        "san rafael": "San Rafael",
+        "general alvear": "General Alvear",
+        "malargüe": "Malargüe",
+    }
     
+    # Buscar coincidencias en el texto
     ubicacion_detectada = loc_filtro  # Default al filtro
     
-    for depto in departamentos_mendoza:
-        if depto in texto:
-            # Normalizar nombre
-            if depto == "mendoza centro":
-                ubicacion_detectada = "Capital"
-            elif depto == "luján de cuyo":
-                ubicacion_detectada = "Luján de Cuyo"
-            elif depto == "san martín":
-                ubicacion_detectada = "San Martín"
-            elif depto == "san carlos":
-                ubicacion_detectada = "San Carlos"
-            elif depto == "san rafael":
-                ubicacion_detectada = "San Rafael"
-            elif depto == "general alvear":
-                ubicacion_detectada = "General Alvear"
-            elif depto == "las heras":
-                ubicacion_detectada = "Las Heras"
-            elif depto == "chacras de coria":
-                ubicacion_detectada = "Chacras de Coria"
-            elif depto == "villa nueva":
-                ubicacion_detectada = "Villa Nueva"
-            elif depto == "valle de uco":
-                ubicacion_detectada = "Tunuyán"
-            else:
-                ubicacion_detectada = depto.title()
+    for depto_key, depto_nombre in departamentos_mendoza.items():
+        if depto_key in texto_lower:
+            ubicacion_detectada = depto_nombre
             break
     
     # Verificar que sea Mendoza
-    keywords_mendoza = ["mendoza", "cuyo", "mendocino", "andino"]
-    es_mendoza = any(keyword in texto for keyword in keywords_mendoza)
+    keywords_mendoza = ["mendoza", "cuyo", "mendocino"]
+    es_mendoza = any(keyword in texto_lower for keyword in keywords_mendoza)
     
-    # Si el departamento detectado está en nuestra lista de ZONAS_MENDOZA, es válido
+    # Si está en nuestra lista de ZONAS_MENDOZA, es válido
     if ubicacion_detectada in ZONAS_MENDOZA.keys():
         return True, ubicacion_detectada
     
     # Si no hay detección clara pero el filtro es Mendoza, confiar parcialmente
-    if loc_filtro in ZONAS_MENDOZA.keys():
+    if loc_filtro in ZONAS_MENDOZA.keys() and es_mendoza:
         return True, loc_filtro
     
     return False, ubicacion_detectada
@@ -330,7 +327,7 @@ def construir_url(portal: str, filtros: dict) -> str:
     return ""
 
 # ─────────────────────────────────────────────────────────
-# ✅ SCRAPING CORREGIDO (con validación de ubicación)
+# ✅ SCRAPING CORREGIDO (con validación de ubicación REAL)
 # ─────────────────────────────────────────────────────────
 @st.cache_data(ttl=1800, show_spinner=False)
 def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 20) -> list:
@@ -354,7 +351,7 @@ def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 2
     SELECTORES = {
         "Inmoclick": ["article.property-item", "div.property-item", "li.property-item"],
         "Inmoup":    ["article.property-item", ".item-property", ".prop-item", "article", ".item"],
-        "Zonaprop":  ['div[data-qa="posting PROPERTY"]', 'div[data-qa="posting-card"]', ".postingCard", ".posting-card-container", 'div[data-qa*="posting"]'],
+        "Zonaprop":  ['div[data-qa="posting PROPERTY"]', 'div[data-qa="posting-card"]', ".postingCard", ".posting-card-container"],
         "Argenprop": [".listing__item", ".list__item", ".card", "article"],
     }
     
@@ -367,15 +364,18 @@ def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 2
         return []
     
     propiedades_dict = []
+    propiedades_filtradas = 0
+    
     for item in items[:max_items]:
         try:
             texto_completo = item.get_text(" ", strip=True)
             
-            # ✅ VALIDACIÓN DE UBICACIÓN (NUEVO)
+            # ✅ VALIDACIÓN DE UBICACIÓN (NUEVO - CRÍTICO)
             es_valida, ubicacion_real = validar_ubicacion_mendoza(texto_completo, filtros["loc"])
             
             # Si la propiedad NO está en Mendoza, la saltamos
             if not es_valida:
+                propiedades_filtradas += 1
                 continue
             
             # Precio
@@ -444,15 +444,15 @@ def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 2
                 "precio_numerico": precio_num,
                 "url": aviso_url,
                 "imagen": img_url,
-                "ubicacion": ubicacion_real,  # ✅ CORREGIDO: Usa ubicación real detectada
+                "ubicacion": ubicacion_real,  # ✅ CORREGIDO: Ubicación real detectada
                 "dormitorios": filtros["amb"],
                 "banos": filtros["banos"],
                 "cochera": filtros["cochera"],
                 "metros_cuadrados": metros,
                 "antiguedad": None,
                 "fecha_scraping": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                "lat": lat,  # ✅ NUEVO: Coordenadas reales
-                "lon": lon,  # ✅ NUEVO: Coordenadas reales
+                "lat": lat,  # ✅ Coordenadas reales
+                "lon": lon,  # ✅ Coordenadas reales
                 "descripcion": texto_completo[:500] if texto_completo else None,
                 "expensas": expensas,
                 "moneda": "USD" if any(s in precio_texto.lower() for s in ["usd", "u$s"]) else "ARS",
@@ -463,6 +463,7 @@ def scrapear_portal(portal: str, url: str, filtros_json: str, max_items: int = 2
             propiedades_dict.append(prop_dict)
         except Exception:
             continue
+    
     return propiedades_dict
 
 def dicts_to_propiedades(dicts: list) -> List[Propiedad]:
@@ -768,8 +769,15 @@ if buscar or st.session_state.view == "results":
     
     todas = dicts_to_propiedades(todas_dicts)
     
-    # ✅ NUEVO: Filtrar propiedades que no están realmente en la ubicación seleccionada
+    # ✅ NUEVO: Filtrar propiedades que no están realmente en Mendoza
     todas = [p for p in todas if p.ubicacion in ZONAS_MENDOZA.keys()]
+    
+    # ✅ NUEVO: Mostrar advertencia si se filtraron propiedades por ubicación
+    total_scrapeadas = len(todas_dicts)
+    total_validas = len(todas)
+    if total_scrapeadas > total_validas:
+        filtradas = total_scrapeadas - total_validas
+        st.warning(f"⚠️ Se filtraron {filtradas} propiedades que no están en Mendoza")
     
     # Filtros post-scraping existentes
     if p_min > 0:
@@ -778,11 +786,6 @@ if buscar or st.session_state.view == "results":
         todas = [p for p in todas if p.precio_numerico == 0 or p.precio_numerico <= p_max]
     if superficie_min > 0:
         todas = [p for p in todas if p.metros_cuadrados and p.metros_cuadrados >= superficie_min]
-    
-    # ✅ NUEVO: Mostrar advertencia si se filtraron propiedades por ubicación
-    if len(todas_dicts) > len(todas):
-        filtradas = len(todas_dicts) - len(todas)
-        st.warning(f"⚠️ Se filtraron {filtradas} propiedades que no están en {loc}")
     
     st.session_state.datos_stats = todas
     st.session_state.datos_mapa = todas
